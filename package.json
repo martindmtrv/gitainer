@@ -9,6 +9,10 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
-    "start": "bun run src/server/server.ts"
+    "start": "bun run --hot src/server/server.ts"
+  },
+  "dependencies": {
+    "node-git-server": "^1.0.0",
+    "simple-git": "^3.25.0"
   }
 }

@@ -1,8 +1,9 @@
 import { Git as GitServer, type PushData } from 'node-git-server';
 import { normalize } from "path";
 import { GitConsumer } from '../git/GitConsumer';
+import { DockerClient } from '../docker/DockerClient';
 
-const resourcesDir = normalize(__dirname + "../../../resources");
+const resourcesDir = normalize(process.cwd() + "/resources");
 const bareDir = resourcesDir + "/bare";
 
 const repos = new GitServer(bareDir, {
@@ -19,7 +20,6 @@ repos.on('push', async (push: PushData & { log: (a?: string) => void }) => {
     push.log(`- ${repo}`);
   }
   push.log();
-
   push.accept();
 });
 
@@ -30,11 +30,16 @@ repos.listen(3000, undefined, async () => {
   }
 
   const bareRepo = new GitConsumer(bareDir + "/docker.git");
-  const latestChanges = await bareRepo.getLatestChanges();
+  const latestChanges = await bareRepo.getChanges("HEAD");
 
   console.log("===", latestChanges[0].file, "===");
-  console.log(await bareRepo.getFileContents(latestChanges[0].file));
+  console.log(await bareRepo.getFileContents("notexist"));
 
+  const docker = new DockerClient();
+
+  const compose = "services:\n helloworld:\n  image: redis";
+
+  console.log(await docker.composeUpdate(compose, "app"));
 
   console.log(await repos.list());
   console.log(`node-git-server running at http://localhost:3000`);

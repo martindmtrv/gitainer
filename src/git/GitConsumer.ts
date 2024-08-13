@@ -8,8 +8,13 @@ export class GitConsumer {
     this.repo = Git(path);
   }
 
-  async getFileContents(filePath: string): Promise<string> {
-    return await this.repo.show([`main:${filePath}`]);
+  async getFileContents(filePath: string): Promise<string | undefined> {
+    return this.repo
+      .show([`main:${filePath}`])
+      .catch(err => {
+        console.error(err);
+        return undefined;
+      });
   }
 
   private static parseShowOutput(showOutput: string): GitChange[] {
@@ -25,7 +30,7 @@ export class GitConsumer {
       });
   }
 
-  async getLatestChanges(pointer: string = "HEAD"): Promise<GitChange[]> {
+  async getChanges(pointer: string = "HEAD"): Promise<GitChange[]> {
     // shows the files changed in latest commit
     return GitConsumer.parseShowOutput(await this.repo.show(["--name-status", "--oneline", pointer]));
   }

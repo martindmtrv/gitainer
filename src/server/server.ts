@@ -1,10 +1,13 @@
-import { normalize } from "path";
 import { DockerClient } from '../docker/DockerClient';
 import { GitainerServer } from '../git/GitainerServer';
 import { WebhookServer } from "../webhooks/WebhookServer";
 
-const resourcesDir = normalize(process.cwd() + "/resources");
-const bareDir = resourcesDir + "/bare";
+import dotenv from "dotenv";
+
+
+dotenv.config();
+
+const bareDir = process.env.GIT_ROOT as string;
 
 const docker = new DockerClient();
 const gitainer = new GitainerServer(bareDir, docker);

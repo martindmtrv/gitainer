@@ -3,7 +3,8 @@
   "module": "packages/server/server.ts",
   "type": "module",
   "scripts": {
-    "start": "concurrently \"docker-compose up\" \"tsx watch src/server/server.ts\""
+    "dev": "concurrently \"docker-compose up\" \"tsx watch src/server/server.ts\"",
+    "start": "tsx src/server/server.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.12.0",
@@ -13,6 +14,7 @@
     "concurrently": "^8.2.2",
     "dockerode": "^4.0.2",
     "dockerode-compose": "^1.4.0",
+    "dotenv": "^16.4.5",
     "hono": "^4.5.5",
     "node-git-server": "^1.0.0",
     "simple-git": "^3.25.0",

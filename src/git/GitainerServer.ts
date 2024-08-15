@@ -60,8 +60,6 @@ export class GitainerServer {
 
   listen(port: number) {
     this.repos.listen(3000, undefined, async () => {
-      this.synthesisTime();
-    
       console.log(await this.repos.list());
       console.log(`Gitainer running at http://localhost:${port}`);
     });

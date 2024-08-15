@@ -58,7 +58,7 @@ export class WebhookServer {
     });
     
     this.app.get('*', (c) => {
-      return fetch("http://localhost:8888" + c.req.path);
+      return fetch(process.env.GITLIST + c.req.path);
     });
   }
 

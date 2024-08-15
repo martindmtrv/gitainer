@@ -1,0 +1,18 @@
+name: Build and push image for Gitainer
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  docker:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        name: Check out code
+
+      - name: Build Docker image
+        run: docker buildx build . -t gitea.chromart.cc/martin/gitainer:v1 -t gitea.chromart.cc/martin/gitainer:latest
+
+      - name: Login and Push Docker image
+        run: echo -n '${{ secrets.PASSWORD }}' | docker login gitea.chromart.cc --username ${{ secrets.USERNAME }} --password-stdin && docker image push --all-tags gitea.chromart.cc/martin/gitainer

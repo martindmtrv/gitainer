@@ -8,7 +8,7 @@ export class DockerClient {
 
   constructor() {
     this.docker = new Dockerode({
-      socketPath: '/var/run/docker.sock',
+      socketPath: process.env.DOCKER_SOCK,
     });
   }
 

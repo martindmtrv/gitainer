@@ -3,13 +3,14 @@
   "module": "packages/server/server.ts",
   "type": "module",
   "scripts": {
-    "start": "tsx watch src/server/server.ts"
+    "start": "concurrently \"docker-compose up\" \"tsx watch src/server/server.ts\""
   },
   "dependencies": {
     "@hono/node-server": "^1.12.0",
     "@types/dockerode": "^3.3.31",
     "@types/dockerode-compose": "^1.4.1",
     "@types/node": "^22.2.0",
+    "concurrently": "^8.2.2",
     "dockerode": "^4.0.2",
     "dockerode-compose": "^1.4.0",
     "hono": "^4.5.5",

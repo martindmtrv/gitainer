@@ -1,0 +1,7 @@
+services:
+  gitlist:
+    image: cmanley/gitlist
+    ports:
+      - 8888:80
+    volumes:
+      - ./resources/bare:/repos:ro

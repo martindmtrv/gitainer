@@ -56,6 +56,10 @@ export class WebhookServer {
         }, 400);
       }
     });
+    
+    this.app.get('*', (c) => {
+      return fetch("http://localhost:8888" + c.req.path);
+    });
   }
 
   listen(port: number) {

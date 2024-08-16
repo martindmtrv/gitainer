@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { DockerClient } from "../docker/DockerClient";
 import type { GitConsumer } from "../git/GitConsumer";
 import { prettyJSON } from "hono/pretty-json";
-import { serve } from "bun";
+import { serve, ShellError } from "bun";
 
 export class WebhookServer {
   readonly app: Hono;
@@ -48,11 +48,12 @@ export class WebhookServer {
         return c.json({
           stackName,
           msg: `Successfully updated stack ${stackName}`,
-          output,
+          output: output.text(),
         });
-      } catch (e: any) {
+      } catch (e) {
+        console.error((e as ShellError).stderr.toString());
         return c.json({
-          err: e,
+          err: (e as ShellError)?.stderr?.toString(),
         }, 400);
       }
     });

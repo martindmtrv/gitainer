@@ -3,7 +3,7 @@ import { GitConsumer } from './GitConsumer';
 import { ResetMode } from 'simple-git';
 import { GitChangeType } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
-
+import type { ShellError } from 'bun';
 
 export class GitainerServer {
   readonly bareDir: string;
@@ -34,6 +34,7 @@ export class GitainerServer {
       push.log('Thanks for pushing! Gitainer will try to synthesize your stacks defined under /stacks now');
       push.log('If it fails, the change will be reverted by the server');
       push.log('Additional pushes will be rejected until synthesis is complete or rolls back');
+      push.log('In case of a rollback, container / compose changes will not be automatically resynthesized');
       push.log();
     
       push.accept();
@@ -68,6 +69,8 @@ export class GitainerServer {
   async synthesisTime() {
     const latestChanges = await this.bareRepo.getChanges("HEAD");
     const stackPattern = /stacks\/([a-zA-Z-_]*)\/docker-compose\.yaml/;
+
+    let res: any = {};
   
     try {
       const stackChanges = latestChanges
@@ -87,18 +90,28 @@ export class GitainerServer {
         await this.docker.composeUpdate(await this.bareRepo.getFileContents(change.file) as string, stackName);
       }
   
-      // TODO: notify the user somehow
+      res = {
+        msg: `Synthesis succeeded for ${stackChanges.length} stack(s)`,
+      };
   
-      console.log("Synthesis succeeded for", stackChanges.length, "stack(s)");
-    } catch (e: any) {
-      console.error(e);
-      console.log("Got an error during synthesis, removing the bad commit", await this.bareRepo.repo.log({ maxCount: 1 }));
-  
+      console.log(res.msg);
+    } catch (e) {
+      res = {
+        err: "Got an error during synthesis, removing the bad commit",
+        output: (e as ShellError)?.stderr?.toString(),
+        gitLog: await this.bareRepo.repo.log({ maxCount: 1 }),
+      };
+
+      console.log(res.err);
+      console.error(res.output);
+      console.log(res.gitLog);
+
       // delete this commit
       await this.bareRepo.repo.reset(ResetMode.SOFT, ["HEAD^"]);
-  
-      // TODO: notify the user somehow
     }
+
+    // TODO: notify the user 
+    // res
   }
 
 }

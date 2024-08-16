@@ -1,22 +1,9 @@
 import { randomUUID } from "crypto";
-import Dockerode from "dockerode";
-import Compose from "dockerode-compose";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { $ } from "bun";
 
 export class DockerClient {
-  readonly docker: Dockerode;
-
-  constructor() {
-    this.docker = new Dockerode({
-      socketPath: process.env.DOCKER_SOCK,
-    });
-  }
-
-  getDockerode(): Dockerode {
-    return this.docker;
-  }
-
-  private composeStringToObj(composeString: string, stackName: string): Compose {
+  private composeStringToTmp(composeString: string): string {
     const fileName = `/tmp/gitainer/${randomUUID()}.yaml`;
 
     // make tmp dir
@@ -25,21 +12,23 @@ export class DockerClient {
     }
 
     writeFileSync(fileName, composeString);
-    return new Compose(this.docker, fileName, stackName);
+
+    return fileName;
   }
 
   /**
    * Compose update is -> down(), pull(), up()
    */
   async composeUpdate(composeString: string, stackName: string) {
-    const compose = this.composeStringToObj(composeString, stackName);
+    const filename = this.composeStringToTmp(composeString);
 
-    await compose.down();
-    await compose.pull(undefined, { streams: true, verbose: true });
-    return compose.up({ verbose: true });
+    await $`docker-compose -f ${filename} down`;
+    await $`docker-compose -f ${filename} pull`;
+    return await $`docker-compose -f ${filename} -p ${stackName} up -d`;
   }
 
   async composeDown(composeString: string, stackName: string) {
-    return this.composeStringToObj(composeString, stackName).down();
+    const filename = this.composeStringToTmp(composeString);
+    return await $`docker-compose -f ${filename} down`;
   }
 }

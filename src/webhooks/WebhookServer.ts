@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import type { DockerClient } from "../docker/DockerClient";
-import { serve } from "@hono/node-server";
 import type { GitConsumer } from "../git/GitConsumer";
 import { prettyJSON } from "hono/pretty-json";
+import { serve } from "bun";
 
 export class WebhookServer {
   readonly app: Hono;
@@ -63,7 +63,7 @@ export class WebhookServer {
   }
 
   listen(port: number) {
-    serve({
+    return serve({
       fetch: this.app.fetch,
       port,
     });

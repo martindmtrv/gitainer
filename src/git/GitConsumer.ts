@@ -48,7 +48,6 @@ export class GitConsumer {
       // this throws when the repo is empty
       return [];
     }
-    
   }
 
   async listStacksWithEnvReference(envVars: string[]): Promise<GitChange[]> {

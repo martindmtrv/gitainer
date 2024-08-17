@@ -69,6 +69,9 @@ export class GitainerServer {
 
     this.bareRepo = new GitConsumer(repoDir);
 
+    // change branch to main
+    await this.bareRepo.repo.raw([ 'symbolic-ref', 'HEAD', 'refs/heads/main' ]);
+
     return this.bareRepo;
   }
 

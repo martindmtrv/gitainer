@@ -8,4 +8,5 @@ export enum GitChangeType {
 export interface GitChange {
   file: string;
   type: GitChangeType;
+  reason: string[];
 };

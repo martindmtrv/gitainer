@@ -1,7 +1,7 @@
 FROM docker:27.1.2-alpine3.20
 
 # Install bun
-RUN apk update && apk add bash npm git
+RUN apk update && apk add bash npm git diffutils
 RUN apk --no-cache add ca-certificates wget
 COPY build-deps/sgerrand.rsa.pub /etc/apk/keys/sgerrand.rsa.pub
 COPY build-deps/glibc-2.28-r0.apk .
@@ -18,11 +18,14 @@ RUN bun install
 
 COPY . .
 RUN mkdir -p /var/gitainer/repo
+RUN mkdir -p /var/gitainer/data
 EXPOSE 3000
 EXPOSE 8080
 
 ENV GIT_ROOT=/var/gitainer/repo
 ENV GITLIST=http://gitlist:80
+ENV GITAINER_DATA=/var/gitainer/data
+ENV REPO_NAME=docker
 
 # make all git repos safe
 RUN git config --global --add safe.directory '*'

@@ -1,7 +1,7 @@
 import { Git as GitServer, type PushData } from 'node-git-server';
 import { GitConsumer } from './GitConsumer';
 import { ResetMode } from 'simple-git';
-import { GitChangeType } from './GitChange';
+import { GitChangeType, type GitChange } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
 
@@ -10,6 +10,7 @@ export class GitainerServer {
   readonly repos: GitServer;
   readonly docker: DockerClient;
   readonly repoName: string;
+  static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.yaml/;
   
   bareRepo!: GitConsumer;
 
@@ -46,7 +47,7 @@ export class GitainerServer {
     
       // attempt synthesis after a short delay
       setTimeout(async () => {
-        this.synthesisTime();
+        await this.synthesisTime(true);
         this.synthesisRunning = false;
       }, 2000);
     });
@@ -54,10 +55,12 @@ export class GitainerServer {
 
   async initRepo(): Promise<GitConsumer> {
     // create the default repo
-
     if (!(await this.repos.exists(this.repoName))) {
       await this.repos.create(this.repoName, (err) => err && console.log(err));
     }
+
+    // make sure data dir exists
+    await $`mkdir -p ${process.env.GITAINER_DATA}`;
 
     const repoDir = this.bareDir + `/${this.repoName}.git`;
     await $`echo "Gitainer Stacks" > ${repoDir}/description`;    
@@ -69,24 +72,68 @@ export class GitainerServer {
     return this.bareRepo;
   }
 
-  listen(port: number) {
-    this.repos.listen(3000, undefined, async () => {
-      console.log(await this.repos.list());
-      console.log(`Gitainer running at http://localhost:${port}`);
-    });
+  async checkForStackEnvUpdate() {
+    console.log("=== start checking for env changes ===");
+    let modifiedEnvs: string[] = [];
+
+    console.log(`writing new envs to ${process.env.GITAINER_DATA}/tmpEnv`);
+
+    await $`env > ${process.env.GITAINER_DATA}/tmpEnv`;
+
+    // make sure this exists or the diff won't work
+    await $`touch ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
+
+    try {
+      console.log(`diffing current tmpEnv to lastSynthesizedEnv`);
+      const diff = await $`diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" ${process.env.GITAINER_DATA}/lastSynthesizedEnv ${process.env.GITAINER_DATA}/tmpEnv`.quiet();
+
+      console.log("diff exit code:", diff.exitCode);
+      console.log("no diff detected");
+    } catch (e) {
+      // for some reason this diff command exits as an error
+      const output = (e as ShellError).text();
+      console.log("diff exit code:", (e as ShellError).exitCode);
+      console.log("diff output:");
+      console.log(output);
+
+      modifiedEnvs = output
+        .split("\n")
+        .slice(0, -1)
+        .map(env => env.slice(0, env.indexOf("=")));
+
+      console.log("Detected env changes", modifiedEnvs);
+    }
+
+    console.log("Checking for compose files that use these envs");
+
+    const stacks = await this.bareRepo.listStacksWithEnvReference(modifiedEnvs);
+    console.log(stacks);
+
+    if (stacks.length > 0) {
+      console.log(`There were ${stacks.length} stack(s) detected, so running synthesis`);
+      const success = await this.synthesisTime(false, stacks);
+
+      if (success) {
+        console.log("Synthesis succeeded so updating lastSythesizedEnv");
+        await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
+      }
+    } else {
+      console.log("Skipped synthtesis because no stacks used these envs");
+      await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
+    }
   }
 
-  async synthesisTime() {
-    const latestChanges = await this.bareRepo.getChanges("HEAD");
-    const stackPattern = /stacks\/([a-zA-Z-_]*)\/docker-compose\.yaml/;
-
+  async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[]) {
+    const latestChanges = changes || await this.bareRepo.getChanges("HEAD");
     let res: any = {};
+
+    let wasSuccessful = true;
   
     try {
       const stackChanges = latestChanges
       .filter(change => 
         [GitChangeType.ADD, GitChangeType.MODIFY].includes(change.type) &&
-        stackPattern.test(change.file)
+        GitainerServer.stackPattern.test(change.file)
       );
   
       if (stackChanges.length == 0) {
@@ -95,7 +142,7 @@ export class GitainerServer {
   
       // apply each stack change
       for (const change of stackChanges) {
-        const stackName = (stackPattern.exec(change.file) as RegExpExecArray)[1];
+        const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
         console.log(`== stack synthesis -> ${stackName} ==`);
         await this.docker.composeUpdate(await this.bareRepo.getFileContents(change.file) as string, stackName);
       }
@@ -106,21 +153,45 @@ export class GitainerServer {
   
       console.log(res.msg);
     } catch (e) {
-      res = {
-        err: "Got an error during synthesis, removing the bad commit",
-        output: (e as ShellError)?.stderr?.toString(),
-        gitLog: await this.bareRepo.repo.log({ maxCount: 1 }),
-      };
-
+      wasSuccessful = false;
+      if (!shouldRevertOnFail) {
+        res = {
+          err: "Got an error during synthesis",
+          output: (e as ShellError)?.stderr?.toString(),
+        };
+      } else {
+        res = {
+          err: "Got an error during synthesis, removing the bad commit",
+          output: (e as ShellError)?.stderr?.toString(),
+          gitLog: await this.bareRepo.repo.log({ maxCount: 1 }),
+        };
+        // delete this commit
+        await this.bareRepo.repo.reset(ResetMode.SOFT, ["HEAD^"]);
+      }
+      
       console.log(res.err);
       console.error(res.output);
       console.log(res.gitLog);
-
-      // delete this commit
-      await this.bareRepo.repo.reset(ResetMode.SOFT, ["HEAD^"]);
     }
+
+    await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
 
     // TODO: notify the user 
     // res
+    return wasSuccessful;
+  }
+
+  async listen(port: number) {
+    this.synthesisRunning = true;
+    this.repos.listen(3000, undefined, async () => {
+      console.log(await this.repos.list());
+      console.log(`Gitainer running at http://localhost:${port}`);
+
+      if (process.env.STACK_UPDATE_ON_ENV_CHANGE) {
+        this.checkForStackEnvUpdate();
+      }
+
+      this.synthesisRunning = false;
+    });
   }
 }

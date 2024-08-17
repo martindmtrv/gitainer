@@ -37,12 +37,18 @@ export class GitConsumer {
     return GitConsumer.parseShowOutput(await this.repo.show(["--name-status", "--oneline", pointer]), `Change at ${pointer}`);
   }
 
-  async listAllFiles(prefix: string) {
-    const output = await this.repo.raw('ls-tree', '-r', 'main', '--name-only');
-    return output
-      .split("\n")
-      .slice(0, -1)
-      .filter(path => path.startsWith(prefix));
+  async listAllFiles(prefix: string): Promise<string[]> {
+    try {
+      const output = await this.repo.raw('ls-tree', '-r', 'main', '--name-only');
+      return output
+        .split("\n")
+        .slice(0, -1)
+        .filter(path => path.startsWith(prefix));
+    } catch (e) {
+      // this throws when the repo is empty
+      return [];
+    }
+    
   }
 
   async listStacksWithEnvReference(envVars: string[]): Promise<GitChange[]> {

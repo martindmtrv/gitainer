@@ -107,20 +107,7 @@ export class GitainerServer {
     console.log("Checking for compose files that use these envs");
 
     const stacks = await this.bareRepo.listStacksWithEnvReference(modifiedEnvs);
-    console.log(stacks);
-
-    if (stacks.length > 0) {
-      console.log(`There were ${stacks.length} stack(s) detected, so running synthesis`);
-      const success = await this.synthesisTime(false, stacks);
-
-      if (success) {
-        console.log("Synthesis succeeded so updating lastSythesizedEnv");
-        await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
-      }
-    } else {
-      console.log("Skipped synthtesis because no stacks used these envs");
-      await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
-    }
+    await this.synthesisTime(false, stacks);
   }
 
   async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[]) {
@@ -152,6 +139,7 @@ export class GitainerServer {
       };
   
       console.log(res.msg);
+      await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
     } catch (e) {
       wasSuccessful = false;
       if (!shouldRevertOnFail) {
@@ -173,8 +161,6 @@ export class GitainerServer {
       console.error(res.output);
       console.log(res.gitLog);
     }
-
-    await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
 
     // TODO: notify the user 
     // res

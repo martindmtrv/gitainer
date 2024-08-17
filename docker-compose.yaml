@@ -17,6 +17,7 @@ services:
       - 8080:8080 # webui and webhooks
     environment:
       STACK_UPDATE_ON_ENV_CHANGE: 1
+      POST_WEBHOOK: https://ntfy.chromart.cc/gitainer
 
       # defaults
       # GIT_ROOT: /var/gitainer/repo

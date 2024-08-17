@@ -162,8 +162,13 @@ export class GitainerServer {
       console.log(res.gitLog);
     }
 
-    // TODO: notify the user 
-    // res
+    if (process.env.POST_WEBHOOK) {
+      fetch(process.env.POST_WEBHOOK, {
+        body: JSON.stringify(res, undefined, 2),
+        method: "POST",
+      });
+    }
+
     return wasSuccessful;
   }
 

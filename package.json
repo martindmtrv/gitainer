@@ -1,13 +1,12 @@
 {
   "name": "gitainer",
-  "module": "packages/server/server.ts",
+  "module": "src/server/server.ts",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"docker run --rm -p 8888:80 -v ./resources/bare:/repos:ro cmanley/gitlist \" \"bun run --watch src/server/server.ts\"",
     "start": "bun run --watch src/server/server.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.12.0",
     "@types/bun": "^1.1.6",
     "concurrently": "^8.2.2",
     "hono": "^4.5.5",

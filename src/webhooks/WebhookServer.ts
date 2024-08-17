@@ -59,7 +59,7 @@ export class WebhookServer {
     });
     
     this.app.get('*', (c) => {
-      return fetch(process.env.GITLIST + c.req.path);
+      return fetch(process.env.GITLIST as string + c.req.path);
     });
   }
 

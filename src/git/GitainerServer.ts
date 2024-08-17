@@ -3,12 +3,13 @@ import { GitConsumer } from './GitConsumer';
 import { ResetMode } from 'simple-git';
 import { GitChangeType } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
-import type { ShellError } from 'bun';
+import { $, type ShellError } from 'bun';
 
 export class GitainerServer {
   readonly bareDir: string;
   readonly repos: GitServer;
   readonly docker: DockerClient;
+  readonly repoName: string;
   
   bareRepo!: GitConsumer;
 
@@ -20,6 +21,8 @@ export class GitainerServer {
     this.repos = new GitServer(rootPath, {
       autoCreate: false,
     });
+
+    this.repoName = process.env.REPO_NAME as string;
 
     this.repos.on('push', async (push: PushData & { log: (a?: string) => void }) => {
       console.log(`Received a push ${push.repo}/${push.commit} ( ${push.branch} )`);
@@ -51,10 +54,17 @@ export class GitainerServer {
 
   async initRepo(): Promise<GitConsumer> {
     // create the default repo
-    if (!(await this.repos.exists("docker"))) {
-      await this.repos.create("docker", (err) => err && console.log(err));
-      this.bareRepo = new GitConsumer(this.bareDir + "/docker.git");
+
+    if (!(await this.repos.exists(this.repoName))) {
+      await this.repos.create(this.repoName, (err) => err && console.log(err));
     }
+
+    const repoDir = this.bareDir + `/${this.repoName}.git`;
+    await $`echo "Gitainer Stacks" > ${repoDir}/description`;    
+    // TODO: make a default readme
+
+
+    this.bareRepo = new GitConsumer(repoDir);
 
     return this.bareRepo;
   }
@@ -113,5 +123,4 @@ export class GitainerServer {
     // TODO: notify the user 
     // res
   }
-
 }

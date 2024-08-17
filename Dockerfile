@@ -3,8 +3,8 @@ FROM docker:27.1.2-alpine3.20
 # Install bun
 RUN apk update && apk add bash npm git
 RUN apk --no-cache add ca-certificates wget
-RUN wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.28-r0/glibc-2.28-r0.apk
-RUN wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
+COPY build-deps/sgerrand.rsa.pub /etc/apk/keys/sgerrand.rsa.pub
+COPY build-deps/glibc-2.28-r0.apk .
 RUN apk add --no-cache --force-overwrite glibc-2.28-r0.apk
 RUN npm install -g bun
 

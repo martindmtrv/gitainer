@@ -50,7 +50,7 @@ async function migrationScript() {
   }
 
   // echo a simple readme
-  await $`echo "# Gitainer\n\nMigrated from portainer backup on ${(new Date()).toISOString()}" > ${process.env.MIGRATION_PATH}/README.md`;
+  await $`echo "# Gitainer\n\nMigrated from portainer backup on ${(new Date()).toISOString()}" > ${process.env.MIGRATION_PATH}/gitainer/README.md`;
 
   console.log(`Successfully replicated stacks from Portainer backup!`);
   console.log(`You can copy over the contents of ${process.env.MIGRATION_PATH}/gitainer to your git repo and commit the changes to migrate all the stacks to be managed by gitainer`);

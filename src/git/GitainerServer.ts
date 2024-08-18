@@ -10,7 +10,7 @@ export class GitainerServer {
   readonly repos: GitServer;
   readonly docker: DockerClient;
   readonly repoName: string;
-  static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.yaml/;
+  static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
   
   bareRepo!: GitConsumer;
 
@@ -122,7 +122,7 @@ export class GitainerServer {
     try {
       const stackChanges = latestChanges
       .filter(change => 
-        [GitChangeType.ADD, GitChangeType.MODIFY].includes(change.type) &&
+        [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME].includes(change.type) &&
         GitainerServer.stackPattern.test(change.file)
       );
   

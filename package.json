@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"docker run --rm -p 8888:80 -v ./resources/bare:/repos:ro cmanley/gitlist \" \"bun run --watch src/server/server.ts\"",
-    "start": "bun run --watch src/server/server.ts"
+    "start": "bun run --watch src/server/server.ts",
+    "migrate": "bun run src/migration/PortainerMigration.ts"
   },
   "dependencies": {
     "@types/bun": "^1.1.6",

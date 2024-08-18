@@ -38,7 +38,7 @@ export class WebhookServer {
 
       if (!stackFile) {
         return c.json({
-          err: "Unknown stack",
+          err: `Unknown stack ${stackName}`,
         }, 404);
       }
 

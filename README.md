@@ -18,7 +18,7 @@ cp portainer-backup*.tar.gz /tmp/migration/
 Run Docker command with a one off container, with the /var/gitainer/migration directory mounted as the directory we just created.
 
 ```
-docker run --it --rm -v /tmp/migration:/var/gitainer/migration chromart/gitainer migrate-portainer
+docker run --rm -it -v /tmp/migration:/var/gitainer/migration gitea.chromart.cc/martin/gitainer migrate-portainer
 ```
 
 Now copy the contents of the output folder to your Gitainer repo:

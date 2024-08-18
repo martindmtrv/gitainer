@@ -19,7 +19,8 @@ export class WebhookServer {
     // view the contents
     this.app.get('/api/stacks/:stackName', async (c) => {
       const stackName = c.req.param('stackName');
-      const stackFile = await this.bareRepo.getFileContents(`stacks/${stackName}/docker-compose.yaml`);
+
+      const stackFile = await this.bareRepo.getStack(stackName);
 
       if (!stackFile) {
         return c.json({
@@ -33,7 +34,7 @@ export class WebhookServer {
     // force a stack reload and pull image
     this.app.post('/api/stacks/:stackName', async (c) => {
       const stackName = c.req.param('stackName');
-      const stackFile = await this.bareRepo.getFileContents(`stacks/${stackName}/docker-compose.yaml`);
+      const stackFile = await this.bareRepo.getStack(stackName);
 
       if (!stackFile) {
         return c.json({

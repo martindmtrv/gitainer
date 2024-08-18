@@ -9,6 +9,16 @@ export class GitConsumer {
     this.repo = Git(path);
   }
 
+  async getStack(stackName: string): Promise<string | undefined> {
+    let fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yaml`);
+
+    if (!fileContents) {
+      fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yml`);
+    }
+
+    return fileContents;
+  }
+
   async getFileContents(filePath: string): Promise<string | undefined> {
     return this.repo
       .show([`main:${filePath}`])

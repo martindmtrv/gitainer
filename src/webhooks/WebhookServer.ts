@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import type { DockerClient } from "../docker/DockerClient";
 import type { GitConsumer } from "../git/GitConsumer";
 import { prettyJSON } from "hono/pretty-json";
-import { serve, ShellError } from "bun";
+import { stream } from 'hono/streaming';
+import { $, serve, ShellError } from "bun";
 
 export class WebhookServer {
   readonly app: Hono;
@@ -15,6 +16,23 @@ export class WebhookServer {
     this.app = new Hono();
 
     this.app.use(prettyJSON());
+
+    // stream docker command api
+    if (process.env.ENABLE_RAW_API) {
+      this.app.get('/api/raw/docker/*', async (c) => {
+        const cmd = c.req.path.slice('/api/raw/docker'.length + 1).split("/");
+
+        const proc = Bun.spawn(['docker', ...cmd]);
+
+        return stream(c, async (stream) => {
+          stream.onAbort(async () => {
+            await proc.kill();
+          });
+      
+          await stream.pipe(proc.stdout);       
+        });
+      });
+    }
 
     // view the contents
     this.app.get('/api/stacks/:stackName', async (c) => {
@@ -58,6 +76,12 @@ export class WebhookServer {
         }, 400);
       }
     });
+
+    this.app.all('/api/*', (c) => {
+      return c.json({
+        err: "Unknown API",
+      }, 404);
+    })
     
     this.app.get('*', (c) => {
       return fetch(process.env.GITLIST as string + c.req.path);

@@ -36,7 +36,7 @@ ENV GIT_ROOT=/var/gitainer/repo
 ENV GITLIST=http://gitlist:80
 ENV GITAINER_DATA=/var/gitainer/data
 ENV REPO_NAME=docker
-
+ENV GIT_BRANCH=main
 
 ENV MIGRATION_PATH=/var/gitainer/migration
 RUN echo "cd /home/gitainer && bun run migrate" > /bin/migrate-portainer

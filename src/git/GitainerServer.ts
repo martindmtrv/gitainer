@@ -27,11 +27,21 @@ export class GitainerServer {
 
     this.repos.on('push', async (push: PushData & { log: (a?: string) => void }) => {
       console.log(`Received a push ${push.repo}/${push.commit} ( ${push.branch} )`);
-    
+
+      if (process.env.GIT_BRANCH !== push.branch) {
+        console.error(`Gitainer only allows push on branch ( ${process.env.GIT_BRANCH} ), rejecting push`);
+        push.reject(400, `Gitainer only allows push on branch ( ${process.env.GIT_BRANCH} )`);
+        return;
+      }
+
       if (this.synthesisRunning) {
         console.error("Synthesis is currently running, rejecting push");
         push.reject(409, "Synthesis in progress, please wait until it completes");
         return;
+      }
+
+      if (push.branch !== 'main') {
+
       }
     
       push.log();

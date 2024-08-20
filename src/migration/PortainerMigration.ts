@@ -6,7 +6,7 @@ export interface PortainerStack {
   StackFileVersion: number;
 };
 
-export interface PoratinerStackDb {
+export interface PortainerStackDb {
   [key: string]: PortainerStack
 }
 
@@ -38,7 +38,7 @@ async function migrationScript() {
   const file = Bun.file(`${process.env.MIGRATION_PATH}/portainer/portainer.json`);
   const contents = await file.json();
 
-  const stacks = contents.stacks as PoratinerStackDb;
+  const stacks = contents.stacks as PortainerStackDb;
 
   console.log("=== 6. Migrating stacks ===");
   

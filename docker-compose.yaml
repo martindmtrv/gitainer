@@ -24,3 +24,4 @@ services:
       # GITLIST: http://gitlist:80
       # GITAINER_DATA: /var/gitainer/data
       # REPO_NAME: docker
+      # GIT_BRANCH: main

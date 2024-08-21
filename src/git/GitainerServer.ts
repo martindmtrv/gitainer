@@ -132,29 +132,29 @@ export class GitainerServer {
 
     console.log(`=== Synthesis starting ===`);
 
-  
-    try {
-      const stackChanges = latestChanges
+    const stackChanges = latestChanges
       .filter(change => 
         [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME].includes(change.type) &&
         GitainerServer.stackPattern.test(change.file)
       );
   
+    try {
       if (stackChanges.length == 0) {
         console.log("Change did not contain any stack changes, so this synthesis is a noop");
       }
   
       // apply each stack change
       for (const change of stackChanges) {
-        currentStack = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
-        console.log(`== stack synthesis -> ${currentStack} ==`);
+        currentStack = change.file;
+        const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
+        console.log(`== stack synthesis -> ${stackName} ==`);
 
-        const hydratedCompose = await this.bareRepo.getStack(currentStack) as string;
+        const hydratedCompose = await this.bareRepo.getStack(stackName) as string;
 
         console.log(`<= ${change.file} =>`);
         console.log(hydratedCompose);
 
-        await this.docker.composeUpdate(hydratedCompose, currentStack);
+        await this.docker.composeUpdate(hydratedCompose, stackName);
       }
   
       res = {
@@ -173,8 +173,14 @@ export class GitainerServer {
         };
       } else {
         res = {
-          err: "Got an error during synthesis, removing the bad commit",
+          err: "Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back",
           output: (e as ShellError)?.stderr?.toString(),
+          suceededStacks: stackChanges.length === 0 || currentStack === stackChanges[0].file ? []: 
+            stackChanges
+              .slice(
+                0, 
+                stackChanges.findIndex(change => change.file === currentStack)
+              ).map(stack => stack.file),
           failedStack: currentStack,
           latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,
         };

@@ -128,6 +128,10 @@ export class GitainerServer {
     let res: any = {};
 
     let wasSuccessful = true;
+    let currentStack: string = "n/a";
+
+    console.log(`=== Synthesis starting ===`);
+
   
     try {
       const stackChanges = latestChanges
@@ -142,13 +146,20 @@ export class GitainerServer {
   
       // apply each stack change
       for (const change of stackChanges) {
-        const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
-        console.log(`== stack synthesis -> ${stackName} ==`);
-        await this.docker.composeUpdate(await this.bareRepo.getFileContents(change.file) as string, stackName);
+        currentStack = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
+        console.log(`== stack synthesis -> ${currentStack} ==`);
+
+        const hydratedCompose = await this.bareRepo.getStack(currentStack) as string;
+
+        console.log(`<= ${change.file} =>`);
+        console.log(hydratedCompose);
+
+        await this.docker.composeUpdate(hydratedCompose, currentStack);
       }
   
       res = {
         msg: `Synthesis succeeded for ${stackChanges.length} stack(s)`,
+        changes: stackChanges
       };
   
       console.log(res.msg);
@@ -164,22 +175,25 @@ export class GitainerServer {
         res = {
           err: "Got an error during synthesis, removing the bad commit",
           output: (e as ShellError)?.stderr?.toString(),
-          gitLog: await this.bareRepo.repo.log({ maxCount: 1 }),
+          failedStack: currentStack,
+          latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,
         };
+
         // delete this commit
         await this.bareRepo.repo.reset(ResetMode.SOFT, ["HEAD^"]);
       }
-      
-      console.log(res.err);
-      console.error(res.output);
-      console.log(res.gitLog);
     }
 
+    console.log("=== Synthesis end ===");
+    console.log(res);
+
     if (process.env.POST_WEBHOOK) {
-      fetch(process.env.POST_WEBHOOK, {
+      console.log(`== Sending POST to ${process.env.POST_WEBHOOK} ==`);
+      await fetch(process.env.POST_WEBHOOK, {
         body: JSON.stringify(res, undefined, 2),
         method: "POST",
       });
+      console.log("== Sent webhook notification ==");
     }
 
     return wasSuccessful;

@@ -1,4 +1,4 @@
-import { simpleGit as Git, type SimpleGit } from 'simple-git';
+import { simpleGit as Git, GitError, type SimpleGit } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import { GitainerServer } from './GitainerServer';
 
@@ -16,14 +16,38 @@ export class GitConsumer {
       fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yml`);
     }
 
+    if (!fileContents) {
+      return undefined;
+    }
+
+    // append extensions
+    if (process.env.FRAGMENTS_PATH) {
+      let fragments = await this.listAllFiles("fragments");
+
+      // get the fragments
+      let fragmentsList = await Promise.all(fragments.map(fragment => this.getFileContents(fragment).then(content => `# fragment -> ${fragment}\n` + content)));
+
+      const composeStart = fileContents.search(/^services:\s*/m);
+
+      fileContents = [
+        fileContents.slice(0, composeStart),
+        "# === fragments start ===\n",
+        fragmentsList.join('\n'),
+        "# === fragments end ===\n",
+        fileContents.slice(composeStart)
+      ].join("\n");
+    }
+
     return fileContents;
   }
 
   async getFileContents(filePath: string): Promise<string | undefined> {
     return this.repo
       .show([`main:${filePath}`])
-      .catch(err => {
-        console.error(err);
+      .catch((err: GitError )=> {
+        if (!err.message.includes("does not exist")) {
+          console.error(err);
+        }
         return undefined;
       });
   }

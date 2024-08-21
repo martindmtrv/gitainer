@@ -33,6 +33,7 @@ EXPOSE 3000
 EXPOSE 8080
 
 ENV GIT_ROOT=/var/gitainer/repo
+ENV FRAGMENTS_PATH=fragments
 ENV GITLIST=http://gitlist:80
 ENV GITAINER_DATA=/var/gitainer/data
 ENV REPO_NAME=docker

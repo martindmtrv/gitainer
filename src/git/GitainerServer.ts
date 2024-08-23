@@ -129,6 +129,7 @@ export class GitainerServer {
 
     let wasSuccessful = true;
     let currentStack: string = "n/a";
+    let hydratedCompose: string = 'n/a';
 
     console.log(`=== Synthesis starting ===`);
 
@@ -149,7 +150,7 @@ export class GitainerServer {
         const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
         console.log(`== stack synthesis -> ${stackName} ==`);
 
-        const hydratedCompose = await this.bareRepo.getStack(stackName) as string;
+        hydratedCompose = await this.bareRepo.getStack(stackName) as string;
 
         console.log(`<= ${change.file} =>`);
         console.log(hydratedCompose);
@@ -165,16 +166,21 @@ export class GitainerServer {
       console.log(res.msg);
       await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
     } catch (e) {
+      console.error(e);
       wasSuccessful = false;
+      res = {
+        output: (e as ShellError)?.stderr?.toString() || (e as Error).message,
+        failedStackContent: hydratedCompose,
+      };
       if (!shouldRevertOnFail) {
         res = {
+          ...res,
           err: "Got an error during synthesis",
-          output: (e as ShellError)?.stderr?.toString(),
         };
       } else {
         res = {
+          ...res,
           err: "Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back",
-          output: (e as ShellError)?.stderr?.toString(),
           suceededStacks: stackChanges.length === 0 || currentStack === stackChanges[0].file ? []: 
             stackChanges
               .slice(

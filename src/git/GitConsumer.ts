@@ -5,6 +5,12 @@ import { GitainerServer } from './GitainerServer';
 export class GitConsumer {
   readonly repo: SimpleGit;
 
+  static readonly IMPORT_REGEX: RegExp = /^#!\s*(.*?)\s*$/mg;
+
+  static condenseNewLines(str: string): string {
+    return str.split('\n').filter(line => line).join('\n');
+  }
+
   constructor(path: string) {
     this.repo = Git(path);
   }
@@ -22,10 +28,23 @@ export class GitConsumer {
 
     // append extensions
     if (process.env.FRAGMENTS_PATH) {
-      let fragments = await this.listAllFiles("fragments");
+      // fragment import like #!<fragmentpath>
+      let importedFragments = Array.from(fileContents.matchAll(GitConsumer.IMPORT_REGEX)).map(match => match[1]).filter(importLine => importLine !== "#!");
+
+      // clear out the import lines and condense the compose empty newlines
+      fileContents = GitConsumer.condenseNewLines(fileContents.replaceAll(GitConsumer.IMPORT_REGEX, ""));
+
+      console.log("= fragments to be imported =");
+      console.log(importedFragments);
 
       // get the fragments
-      let fragmentsList = await Promise.all(fragments.map(fragment => this.getFileContents(fragment).then(content => `# fragment -> ${fragment}\n` + content)));
+      let fragmentsList = await Promise.all(importedFragments.map(fragment => this.getFileContents(fragment).then(content => {
+        if (!content) {
+          throw new Error(`Fragment ${fragment} does not exist`);
+        }
+
+        return `# fragment -> ${fragment}\n` + GitConsumer.condenseNewLines(content);
+      })));
 
       const composeStart = fileContents.search(/^services:\s*/m);
 
@@ -33,10 +52,14 @@ export class GitConsumer {
         fileContents.slice(0, composeStart),
         "# === fragments start ===\n",
         fragmentsList.join('\n'),
-        "# === fragments end ===\n",
+        "\n# === fragments end ===\n",
         fileContents.slice(composeStart)
       ].join("\n");
     }
+
+    console.log("= After resolving fragments =");
+
+    console.log(fileContents);
 
     return fileContents;
   }

@@ -107,7 +107,7 @@ export class GitConsumer {
     }
   }
 
-  async listStacksWithEnvReference(envVars: string[]): Promise<GitChange[]> {
+  async listStacksWithEnvReference(envVars: string[], fragments: string[] = []): Promise<GitChange[]> {
     const files = await this.listAllFiles("stacks");
 
     const promises = await Promise.all(files
@@ -130,11 +130,17 @@ export class GitConsumer {
         }
       });
 
+      fragments.forEach(fragment => {
+        if (file.contents.includes(fragment)) {
+          matches.push(fragment);
+        }
+      });
+
       if (matches.length !== 0) {
         results.push({
           file: file.file,
           type: GitChangeType.MODIFY,
-          reason: `Stack contains ENV VAR references to ${matches}`,
+          reason: `Stack contains references to ${matches}`,
         });
       }
     }

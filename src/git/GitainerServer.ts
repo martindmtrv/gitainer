@@ -133,11 +133,18 @@ export class GitainerServer {
 
     console.log(`=== Synthesis starting ===`);
 
+    const fragmentChanges = latestChanges
+      .filter(change => change.file.startsWith(process.env.FRAGMENTS_PATH as string + "/"));
+
+    const fragmentStackChanges = await this.bareRepo.listStacksWithEnvReference([], fragmentChanges.map(fragment => fragment.file));
+
     const stackChanges = latestChanges
       .filter(change => 
         [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME].includes(change.type) &&
         GitainerServer.stackPattern.test(change.file)
       );
+
+    stackChanges.push(...fragmentStackChanges);
   
     try {
       if (stackChanges.length == 0) {

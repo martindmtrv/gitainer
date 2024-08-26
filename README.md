@@ -2,6 +2,14 @@
 
 A git server to manage docker stacks for a homelab
 
+## support my work
+
+Leave me a tip with lightning!
+
+<a href="lightning:zap@chromart.cc" class="button" style="font-size:24px">
+  ⚡ Lightning Tip
+</a>
+
 ## migration from portainer
 
 Go into Portainer webui and download a backup file:

@@ -6,7 +6,7 @@ A git server to manage docker stacks for a homelab
 
 Leave me a tip with lightning!
 
-<a href="lightning:zap@chromart.cc" class="button" style="font-size:24px">
+<a href="bitcoin:?lno=zap@chromart.cc" class="button" style="font-size:24px">
   ⚡ Lightning Tip
 </a>
 

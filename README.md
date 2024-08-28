@@ -96,6 +96,102 @@ When actually deploying this compose file, it will be resolved as
 
 On startup, Gitainer checks the current set of environment variables against the last set of variables. If there is any differences, Gitainer will look through all stacks to see if any reference this variable and redeploy this stack if it does consume this variable.
 
+## Fragments
+
+Docker compose also natively supports [fragments](https://docs.docker.com/reference/compose-file/fragments/). The limitation with fragments in regular Docker Compose is they require the anchor to be resolved within the same file, because [YAML documents are independant](https://github.com/docker/compose/issues/5621#issuecomment-499021562). Ultimately this means that they cannot be reused across multiple files when using built in options such as [merge](https://docs.docker.com/reference/compose-file/merge/) or [include](https://docs.docker.com/reference/compose-file/include/).
+
+Docker compose also allows for [YAML merge syntax](https://yaml.org/type/merge.html) to add properties to existing mappings
+
+Gitainer solves this by introducing a new concept of importing within Docker Compose. In short, adding a special comment allows you to patch in your desired fragment, before docker-compose is ever called. This allows us to get around these limitations, without any actual copy and pasting required.
+
+### Constants Example
+
+Let say in this example I want every service to have some common properties for restarting and grace period. I can define a fragment like this in the repo with an anchor called `common`
+
+fragments/commonProperties.yaml
+```
+x-common-stuff: &common
+  restart: unless-stopped
+  stop_grace_period: 10m
+```
+
+then in my stack I will import it before my services and then reference the anchor `common` and merge the properties in.
+
+```
+#! fragments/commonProperties.yaml
+services:
+  hello:
+    image: nginx
+    <<: [*common]
+```
+
+Gitainer will patch in the file before it runs `docker-compose` resulting in this docker-compose.yaml
+
+```
+# fragments start
+
+# fragments/commonProperties.yaml
+x-common-stuff: &common
+  restart: unless-stopped
+  stop_grace_period: 10m
+
+# fragments end
+
+services:
+  hello:
+    image: nginx
+    <<: [*common]
+```
+
+### Example with anchor using other anchor
+
+Let say in this example I want a fragment that sets some container labels based on some value specific to this stack. This fragment defines an anchor `specific_labels` and expects that two anchors are defined `container_name` and `url`.
+
+fragments/specificLabel.yaml
+```
+x-specific-labels: &specific_labels
+  dashboardlabel.name: *container_name
+  dashboardlabel.url: *url
+```
+
+then in my stack I will import it before my services and but after `container_name` and `url` anchors have been defined
+
+```
+x-configuration:
+  x-name: &container_name myname
+  x-url: &url https://myname.mydomain.com
+
+#! fragments/specificLabel.yaml
+services:
+  hello:
+    image: nginx
+    labels:
+      <<: [*specific_labels]
+```
+
+Gitainer will patch in the file before it runs `docker-compose` resulting in this docker-compose.yaml
+
+```
+x-configuration:
+  x-name: &container_name myname
+  x-url: &url https://myname.mydomain.com
+
+# fragments start
+
+# fragments/specificLabel.yaml
+x-specific-labels: &specific_labels
+  dashboardlabel.name: *container_name
+  dashboardlabel.url: *url
+
+# fragments end
+
+services:
+  hello:
+    image: nginx
+    labels:
+      <<: [*specific_labels]
+```
+
 ## Motivation
 
 Since getting in to selfhosting about 2 years ago, I have used Portainer to manage Docker stacks. After using it for a while, I found many areas in which I thought the core experience of managing stacks could be improved.

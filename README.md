@@ -10,6 +10,20 @@ Leave me a tip with lightning!
   ⚡ Lightning Tip
 </a>
 
+## example integrations
+
+Gitainer does not provide a UI for access, but does play well with other Docker tools! Keep your compose files managed Gitainer for editing / deployments and handle operations with other tooling
+
+### portainer
+If you have gotten used to using Portainer for managing containers and viewing logs, you can still do so! Use Gitainer to version your compose files and use portainer for any container management!
+
+All of your stacks will be visible with "limited" access because they are created outside of Portainer, but containers can still be accessed directly and stopped, restarted, and recreated.
+
+![portainer limited access stacks](./assets/portainer-limit-access.png)
+
+You are still able to stop/restart/repull images this way, just not editing the compose files that are managed by Gitainer.
+
+
 ## migration from portainer
 
 Go into Portainer webui and download a backup file:

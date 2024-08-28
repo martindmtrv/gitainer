@@ -16,6 +16,8 @@ Simple Git-based container management platform for Docker Standalone
 
 ## Usage
 
+### Quick Start
+
 Deploy the stack with docker compose
 ```
 services:
@@ -29,9 +31,8 @@ services:
       - 3000:3000 # git server
       - 8080:8080 # webui and webhooks
     environment:
-      STACK_UPDATE_ON_ENV_CHANGE: 1
-      POST_WEBHOOK: https://ntfy.chromart.cc/gitainer
-
+      # STACK_UPDATE_ON_ENV_CHANGE: 1
+      # POST_WEBHOOK: <some POST endpoint>
       # defaults
       # GIT_ROOT: /var/gitainer/repo
       # GITLIST: http://gitlist:80
@@ -60,6 +61,40 @@ git add .
 git commit -m "my first stack"
 git push
 ```
+
+"mystack" will now be deployed on the host machine
+
+### Variables
+
+Docker compose natively supports [variable interpolation](https://docs.docker.com/compose/environment-variables/variable-interpolation/) meaning that any variable in your environment will be visible to Gitainer. 
+
+This is exceedingly useful for common repetitive fields such as your external domain or a root directory for bind mount volumes.
+
+An example of how this can be used:
+
+gitainer docker-compose.yaml define a variable
+```
+...
+  environment:
+    APP_DIR: /mnt/HDD/dockerStorage
+```
+
+from a compose file in Gitainer
+
+```
+...
+  volumes:
+    - $APP_DIR/mystack:/data
+```
+
+When actually deploying this compose file, it will be resolved as
+
+```
+  volumes:
+    - /mnt/HDD/dockerStorage:/data
+```
+
+On startup, Gitainer checks the current set of environment variables against the last set of variables. If there is any differences, Gitainer will look through all stacks to see if any reference this variable and redeploy this stack if it does consume this variable.
 
 ## Motivation
 

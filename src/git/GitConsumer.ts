@@ -1,6 +1,7 @@
 import { simpleGit as Git, GitError, type SimpleGit } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import { GitainerServer } from './GitainerServer';
+import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
 
 export class GitConsumer {
   readonly repo: SimpleGit;
@@ -13,6 +14,12 @@ export class GitConsumer {
 
   constructor(path: string) {
     this.repo = Git(path);
+  }
+
+  async getAllStackNames(): Promise<string[]> {
+    const stacks = await this.getAllStacks();
+
+    return stacks.map(stack => (GitainerServer.stackPattern.exec(stack.file) as RegExpExecArray)[1])
   }
 
   async getStack(stackName: string): Promise<string | undefined> {
@@ -107,15 +114,19 @@ export class GitConsumer {
     }
   }
 
-  async listStacksWithEnvReference(envVars: string[], fragments: string[] = []): Promise<GitChange[]> {
+  async getAllStacks(): Promise<{ file: string, contents: string }[]> {
     const files = await this.listAllFiles("stacks");
 
-    const promises = await Promise.all(files
+    return Promise.all(files
       .filter(file => GitainerServer.stackPattern.test(file))
       .map(file => this.getFileContents(file).then(contents => ({
         file,
         contents: contents as string,
       }))));
+  }
+
+  async listStacksWithEnvReference(envVars: string[], fragments: string[] = []): Promise<GitChange[]> {
+    const promises = await this.getAllStacks();
 
     const results = [];
 
@@ -146,5 +157,25 @@ export class GitConsumer {
     }
 
     return results;
+  }
+
+  async writeAllStacksToDir(dir: string): Promise<void> {
+    if (existsSync(dir)) {
+      rmSync(dir + '/*', { force: true, recursive: true });
+    } else {
+      mkdirSync(dir);
+    }
+
+    const stackNames = await this.getAllStackNames();
+
+    const promises = stackNames.map(name => 
+      this.getStack(name)
+        .then(contents => {
+          mkdirSync(`${dir}/stacks/${name}`, { recursive: true });
+          writeFileSync(`${dir}/stacks/${name}/docker-compose.yaml`, contents as string);
+        })
+    );
+
+    await Promise.all(promises);
   }
 }

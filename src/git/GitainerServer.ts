@@ -215,6 +215,9 @@ export class GitainerServer {
       console.log("== Sent webhook notification ==");
     }
 
+    // push all the current stack files to a dir
+    await this.bareRepo.writeAllStacksToDir(process.env.STACKS_PATH as string);
+
     return wasSuccessful;
   }
 

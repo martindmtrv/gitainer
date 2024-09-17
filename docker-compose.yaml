@@ -11,6 +11,7 @@ services:
     volumes:
       - ./resources/bare:/var/gitainer/repo      
       - ./resources/data:/var/gitainer/data
+      - ./resources/stacks:/var/gitainer/stacks
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - 3000:3000 # git server
@@ -26,4 +27,6 @@ services:
       # REPO_NAME: docker
       # GIT_BRANCH: main
       # FRAGMENTS_PATH=fragments
+      # STACKS_PATH=/var/gitainer/stacks
+
 

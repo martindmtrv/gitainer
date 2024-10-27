@@ -7,9 +7,9 @@ services:
       - 80
 
   gitainer:
-    image: chromart/gitainer
+    image: gitea.chromart.cc/gitainer
     volumes:
-      - ./resources/bare:/var/gitainer/repo      
+      - ./resources/bare:/var/gitainer/repo
       - ./resources/data:/var/gitainer/data
       - ./resources/stacks:/var/gitainer/stacks
       - /var/run/docker.sock:/var/run/docker.sock
@@ -18,8 +18,7 @@ services:
       - 8080:8080 # webui and webhooks
     environment:
       STACK_UPDATE_ON_ENV_CHANGE: 1
-      POST_WEBHOOK: https://ntfy.chromart.cc/gitainer
-
+      # POST_WEBHOOK: 
       # defaults
       # GIT_ROOT: /var/gitainer/repo
       # GITLIST: http://gitlist:80

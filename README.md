@@ -22,7 +22,7 @@ Deploy the stack with docker compose
 ```
 services:
   gitainer:
-    image: chromart/gitainer
+    image: gitea.chromart.cc/gitainer
     volumes:
       - ./resources/bare:/var/gitainer/repo      
       - ./resources/data:/var/gitainer/data

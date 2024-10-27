@@ -22,13 +22,13 @@ export class DockerClient {
   async composeUpdate(composeString: string, stackName: string) {
     const filename = this.composeStringToTmp(composeString);
 
-    await $`docker-compose -f ${filename} down`;
+    await $`docker-compose -f ${filename} down --remove-orphans`;
     await $`docker-compose -f ${filename} pull`;
     return await $`docker-compose -f ${filename} -p ${stackName} up -d`;
   }
 
   async composeDown(composeString: string, stackName: string) {
     const filename = this.composeStringToTmp(composeString);
-    return await $`docker-compose -f ${filename} down`;
+    return await $`docker-compose -f ${filename} down --remove-orphans`;
   }
 }

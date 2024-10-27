@@ -50,7 +50,6 @@ cd docker
 
 Create your stack
 ```
-# todo auto populate the stacks dir
 mkdir -p stacks/mystack
 vi stacks/mystack/docker-compose.yaml
 ```
@@ -196,7 +195,7 @@ services:
 
 Since getting in to selfhosting about 2 years ago, I have used Portainer to manage Docker stacks. After using it for a while, I found many areas in which I thought the core experience of managing stacks could be improved.
 
-Most people already use git repos to manage their stacks, or some structured directories on the host machine where they manually run `docker-compose` for when making changes. For myself, I used a git repo on my local Gitea instance, which contained an action that could gather the diff of my changes and then make POST requests to the Portainer API. 
+Most people already use git repos to manage their stacks, or some structured directories on the host machine where they manually run `docker-compose` for when making changes. For myself, I used a git repo on my local Gitea instance, which contained a custom action script that could gather the diff of my changes and then make POST requests to the Portainer API.
 
 This was a clunky solution for many reasons and I ultimately came to the conclusion that building something simple to automate this process would be more valuable and extensible for the future and may also help others that are looking for this sort of solution.
 
@@ -207,6 +206,10 @@ Gitainer does not provide a UI for access, but does play well with other existin
 Keep your compose files managed Gitainer for editing / deployments and handle operations with other tooling.
 
 This is not an exhaustive list but just a shortlist of things that I am experimenting with to improve my own homelab.
+
+### [Dockwatch](https://github.com/Notifiarr/dockwatch)
+You can use dockwatch to monitor containers managed by Gitainer and even automatically schedule checking for updates. 
+This is a super powerful combination with Gitainer for infrastructure as code and Dockwatch for managing homelab operations.
 
 ### [VSCode Web (web interface to a git repo)](https://hub.docker.com/r/linuxserver/code-server)
 

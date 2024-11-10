@@ -15,4 +15,4 @@ jobs:
         run: docker buildx build . -t 192.168.1.150:9120/gitainer:latest
 
       - name: Push Docker image to local repo
-        run: docker image push --all-tags 192.168.1.150:9120/gitainer:latest
+        run: docker image push --all-tags 192.168.1.150:9120/gitainer

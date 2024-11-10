@@ -82,10 +82,6 @@ export class WebhookServer {
         err: "Unknown API",
       }, 404);
     })
-    
-    this.app.get('*', (c) => {
-      return fetch(process.env.GITLIST as string + c.req.path);
-    });
   }
 
   listen(port: number) {

@@ -1,11 +1,4 @@
 services:
-  gitlist:
-    image: cmanley/gitlist
-    volumes:
-      - ./resources/bare:/repos:ro
-    expose:
-      - 80
-
   gitainer:
     image: gitea.chromart.cc/martin/gitainer:latest
     volumes:
@@ -21,7 +14,6 @@ services:
       # POST_WEBHOOK: 
       # defaults
       # GIT_ROOT: /var/gitainer/repo
-      # GITLIST: http://gitlist:80
       # GITAINER_DATA: /var/gitainer/data
       # REPO_NAME: docker
       # GIT_BRANCH: main

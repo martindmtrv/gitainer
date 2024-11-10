@@ -17,7 +17,7 @@ Deploy the stack with docker compose
 ```
 services:
   gitainer:
-    image: gitea.chromart.cc/gitainer
+    image: gitea.chromart.cc/martin/gitainer
     volumes:
       - ./resources/bare:/var/gitainer/repo      
       - ./resources/data:/var/gitainer/data
@@ -30,7 +30,6 @@ services:
       # POST_WEBHOOK: <some POST endpoint>
       # defaults
       # GIT_ROOT: /var/gitainer/repo
-      # GITLIST: http://gitlist:80
       # GITAINER_DATA: /var/gitainer/data
       # REPO_NAME: docker
       # GIT_BRANCH: main
@@ -229,7 +228,6 @@ If you have gotten used to using Portainer for managing containers and viewing l
 All of your stacks will be visible with "limited" access because they are created outside of Portainer, but containers can still be accessed directly and stopped, restarted, recreated and updated.
 
 ![portainer limited access stacks](./assets/portainer-limit-access.png)
-
 
 ## migration from portainer
 

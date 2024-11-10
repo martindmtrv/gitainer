@@ -7,7 +7,7 @@ services:
       - 80
 
   gitainer:
-    image: gitea.chromart.cc/gitainer
+    image: gitea.chromart.cc/martin/gitainer:latest
     volumes:
       - ./resources/bare:/var/gitainer/repo
       - ./resources/data:/var/gitainer/data

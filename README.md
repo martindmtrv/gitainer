@@ -2,8 +2,6 @@
 
 Simple Git-based container management platform for Docker Standalone
 
-[Support my work with Lightning ⚡](bitcoin:?lno=lno1zrxq8pjw7qjlm68mtp7e3yvxee4y5xrgjhhyf2fxhlphpckrvevh50u0q2rkvqf2wyanp7swjke685p0hkmmeuckmlf93p0d6kwhez4elu2ngqszyudq885cu586ff7n5zuv6ekt6uswfm3t49g3vztwjnp2s3047yjsqve58akwjaw8er89dpvc2yf383amedxkelsyl3d8adrrk7cn0nkvasmzuzpxkdy96ad3cl4h5nm7dptl2f2jq0d4r2zk6pxxcyg53kc489hnu0hqvalhhgsnv90fhumxm29tkznaqqqsc96fxs592lh92v6l7rcw334sng)
-
 ## Features
 
 - All the benefits of Git such as versioning, portability, etc.

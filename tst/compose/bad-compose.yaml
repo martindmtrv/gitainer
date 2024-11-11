@@ -1,0 +1,4 @@
+services:
+    redis:
+    container_name:
+    image: redis

@@ -10,27 +10,50 @@ export class GitainerServer {
   readonly repos: GitServer;
   readonly docker: DockerClient;
   readonly repoName: string;
+  readonly gitBranch: string;
+  readonly gitainerDataPath: string;
+  readonly fragmentsPath: string;
+  readonly stacksPath: string;
+  readonly stackUpdateOnEnvChange: boolean;
+  readonly postWebhook?: string;
+
   static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
   
   bareRepo!: GitConsumer;
 
   private synthesisRunning: boolean = false;
 
-  constructor(rootPath: string, docker: DockerClient) {
+  constructor(
+    repoName: string,
+    gitBranch: string,
+    repoDir: string, 
+    gitainerDataPath: string,
+    fragmentsPath: string,
+    stacksPath: string,
+    docker: DockerClient,
+    stackUpdateOnEnvChange: boolean = true,
+    postWebhook?: string,
+  ) {
+    this.repoName = repoName;
+    this.gitBranch = gitBranch;
+    this.postWebhook = postWebhook;
+    this.gitainerDataPath = gitainerDataPath;
+    this.stackUpdateOnEnvChange = stackUpdateOnEnvChange;
+    this.fragmentsPath = fragmentsPath;
+    this.stacksPath = stacksPath;
+
     this.docker = docker;
-    this.bareDir = rootPath;
-    this.repos = new GitServer(rootPath, {
+    this.bareDir = repoDir;
+    this.repos = new GitServer(repoDir, {
       autoCreate: false,
     });
-
-    this.repoName = process.env.REPO_NAME as string;
 
     this.repos.on('push', async (push: PushData & { log: (a?: string) => void }) => {
       console.log(`Received a push ${push.repo}/${push.commit} ( ${push.branch} )`);
 
-      if (process.env.GIT_BRANCH !== push.branch) {
-        console.error(`Gitainer only allows push on branch ( ${process.env.GIT_BRANCH} ), rejecting push`);
-        push.reject(400, `Gitainer only allows push on branch ( ${process.env.GIT_BRANCH} )`);
+      if (this.gitBranch !== push.branch) {
+        console.error(`Gitainer only allows push on branch ( ${this.gitBranch} ), rejecting push`);
+        push.reject(400, `Gitainer only allows push on branch ( ${this.gitBranch} )`);
         return;
       }
 
@@ -64,19 +87,31 @@ export class GitainerServer {
   }
 
   async initRepo(): Promise<GitConsumer> {
+    let repoCreate: Promise<void> | undefined = undefined;
+
     // create the default repo
-    if (!(await this.repos.exists(this.repoName))) {
-      await this.repos.create(this.repoName, (err) => err && console.log(err));
+    if (!this.repos.exists(this.repoName)) {
+      repoCreate = new Promise((resolve, reject) => {
+        this.repos.create(this.repoName, (err) => {
+          if (err) {
+            reject(err);
+          }
+          resolve();
+        });
+      })
+    }
+
+    // await creation
+    if (repoCreate) {
+      await repoCreate;
     }
 
     // make sure data dir exists
-    await $`mkdir -p ${process.env.GITAINER_DATA}`;
+    await $`mkdir -p ${this.gitainerDataPath}`;
 
     const repoDir = this.bareDir + `/${this.repoName}.git`;
-    await $`echo "Gitainer Stacks" > ${repoDir}/description`;    
+    await $`echo "Gitainer Stacks" > ${repoDir}/description`;
     // TODO: make a default readme
-
-
     this.bareRepo = new GitConsumer(repoDir);
 
     // change branch to main
@@ -89,16 +124,16 @@ export class GitainerServer {
     console.log("=== start checking for env changes ===");
     let modifiedEnvs: string[] = [];
 
-    console.log(`writing new envs to ${process.env.GITAINER_DATA}/tmpEnv`);
+    console.log(`writing new envs to ${this.gitainerDataPath}/tmpEnv`);
 
-    await $`env > ${process.env.GITAINER_DATA}/tmpEnv`;
+    await $`env > ${this.gitainerDataPath}/tmpEnv`;
 
     // make sure this exists or the diff won't work
-    await $`touch ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
+    await $`touch ${this.gitainerDataPath}/lastSynthesizedEnv`;
 
     try {
       console.log(`diffing current tmpEnv to lastSynthesizedEnv`);
-      const diff = await $`diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" ${process.env.GITAINER_DATA}/lastSynthesizedEnv ${process.env.GITAINER_DATA}/tmpEnv`.quiet();
+      const diff = await $`diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" ${this.gitainerDataPath}/lastSynthesizedEnv ${this.gitainerDataPath}/tmpEnv`.quiet();
 
       console.log("diff exit code:", diff.exitCode);
       console.log("no diff detected");
@@ -134,7 +169,7 @@ export class GitainerServer {
     console.log(`=== Synthesis starting ===`);
 
     const fragmentChanges = latestChanges
-      .filter(change => change.file.startsWith(process.env.FRAGMENTS_PATH as string + "/"));
+      .filter(change => change.file.startsWith(this.fragmentsPath + "/"));
 
     const fragmentStackChanges = await this.bareRepo.listStacksWithEnvReference([], fragmentChanges.map(fragment => fragment.file));
 
@@ -171,7 +206,7 @@ export class GitainerServer {
       };
   
       console.log(res.msg);
-      await $`env > ${process.env.GITAINER_DATA}/lastSynthesizedEnv`;
+      await $`env > ${this.gitainerDataPath}/lastSynthesizedEnv`;
     } catch (e) {
       console.error(e);
       wasSuccessful = false;
@@ -206,9 +241,9 @@ export class GitainerServer {
     console.log("=== Synthesis end ===");
     console.log(res);
 
-    if (process.env.POST_WEBHOOK) {
-      console.log(`== Sending POST to ${process.env.POST_WEBHOOK} ==`);
-      await fetch(process.env.POST_WEBHOOK, {
+    if (this.postWebhook) {
+      console.log(`== Sending POST to ${this.postWebhook} ==`);
+      await fetch(this.postWebhook, {
         body: JSON.stringify(res, undefined, 2),
         method: "POST",
       });
@@ -216,7 +251,7 @@ export class GitainerServer {
     }
 
     // push all the current stack files to a dir
-    await this.bareRepo.writeAllStacksToDir(process.env.STACKS_PATH as string);
+    await this.bareRepo.writeAllStacksToDir(this.stacksPath);
 
     return wasSuccessful;
   }
@@ -227,11 +262,16 @@ export class GitainerServer {
       console.log(await this.repos.list());
       console.log(`Gitainer running at http://localhost:${port}`);
 
-      if (process.env.STACK_UPDATE_ON_ENV_CHANGE) {
+      if (this.stackUpdateOnEnvChange) {
         this.checkForStackEnvUpdate();
       }
 
       this.synthesisRunning = false;
     });
+  }
+
+  async close() {
+    this.repos.removeAllListeners();
+    await this.repos.close();
   }
 }

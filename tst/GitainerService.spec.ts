@@ -1,4 +1,4 @@
-import { expect, test, beforeEach, afterEach } from "bun:test";
+import { expect, test, beforeEach, afterEach, afterAll } from "bun:test";
 import { DockerClient } from "../src/docker/DockerClient";
 import { GitainerServer } from "../src/git/GitainerServer";
 import { $, sleepSync } from "bun";
@@ -31,6 +31,14 @@ async function initEmptyRepo() {
   gitainer.listen(3000);
 }
 
+async function cloneAndConfigRepo() {
+  await $`git clone http://localhost:3000/docker.git`.cwd(TEST_ROOT + "/client");
+  await $`git config user.name "test"`.cwd(TEST_ROOT + "/client/docker");
+  await $`git config user.email "test@test.com"`.cwd(TEST_ROOT + "/client/docker");
+  await $`git checkout -b main`.cwd(TEST_ROOT + "/client/docker");
+  await $`git config push.autoSetupRemote "true"`.cwd(TEST_ROOT + "/client/docker");
+}
+
 beforeEach(async () => {
   postHelper = new NotifyWebhookTestHelper("/gitainer", 3005);
 
@@ -52,23 +60,16 @@ afterEach(async () => {
   postHelper.listener.stop(true);
   rmSync(TEST_ROOT, { recursive: true });
 
-  // stop and remove all docker containers
-  try {
-    await $`docker container rm $(docker container ls -aq) -f`
-
-  } catch (e) {
-    console.warn("May or may not have cleaned up all docker containers, got an ERROR from docker cli");
-  }
-
+  // clean containers
+  await $`docker rm -f redis`;
 });
 
 test("can clone empty gitainer repo", async () => {
-  await $`git clone http://localhost:3000/docker.git`.cwd(TEST_ROOT + "/client");
+  await cloneAndConfigRepo();
 });
 
 test("push redis stack, starts redis service and sends POST notification", async () => {
-  await $`git clone http://localhost:3000/docker.git`.cwd(TEST_ROOT + "/client");
-
+  await cloneAndConfigRepo();
   const redisRoot = TEST_ROOT + "/client/docker/stacks/redis";
 
   mkdirSync(redisRoot, {
@@ -98,7 +99,7 @@ test("push redis stack, starts redis service and sends POST notification", async
 });
 
 test("bad compose file, should fail to deploy", async () => {
-  await $`git clone http://localhost:3000/docker.git`.cwd(TEST_ROOT + "/client");
+  await cloneAndConfigRepo();
 
   const redisRoot = TEST_ROOT + "/client/docker/stacks/redis";
 

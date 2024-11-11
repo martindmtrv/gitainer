@@ -62,10 +62,6 @@ export class GitainerServer {
         push.reject(409, "Synthesis in progress, please wait until it completes");
         return;
       }
-
-      if (push.branch !== 'main') {
-
-      }
     
       push.log();
       push.log('Thanks for pushing! Gitainer will try to synthesize your stacks defined under /stacks now');
@@ -115,7 +111,16 @@ export class GitainerServer {
     this.bareRepo = new GitConsumer(repoDir);
 
     // change branch to main
-    await this.bareRepo.repo.raw([ 'symbolic-ref', 'HEAD', 'refs/heads/main' ]);
+    const setMainPromise = new Promise((resolve, reject) => {
+      this.bareRepo.repo.raw([ 'symbolic-ref', 'HEAD', 'refs/heads/main' ], (err) => {
+        if (err) {
+          reject(err);
+        }
+        resolve(null);
+      });
+    });
+
+    await setMainPromise;
 
     return this.bareRepo;
   }

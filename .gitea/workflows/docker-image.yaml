@@ -13,6 +13,9 @@ jobs:
 
       - name: Build Docker image
         run: docker buildx build . -t gitea.chromart.cc/martin/gitainer:v1 -t gitea.chromart.cc/martin/gitainer:latest
+      
+      - name: Run tests
+        run: docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock gitea.chromart.cc/martin/gitainer bun test
 
       - name: Login and Push Docker image
         run: echo -n '${{ secrets.PASSWORD }}' | docker login gitea.chromart.cc --username ${{ secrets.USERNAME }} --password-stdin && docker image push --all-tags gitea.chromart.cc/martin/gitainer

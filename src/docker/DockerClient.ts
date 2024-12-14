@@ -29,6 +29,6 @@ export class DockerClient {
 
   async composeDown(composeString: string, stackName: string) {
     const filename = this.composeStringToTmp(composeString);
-    return await $`docker-compose -f ${filename} down`;
+    return await $`docker-compose -f ${filename} -p ${stackName} down`;
   }
 }

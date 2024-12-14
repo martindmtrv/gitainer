@@ -24,7 +24,7 @@ export class DockerClient {
 
     await $`docker-compose -f ${filename} down`;
     await $`docker-compose -f ${filename} pull`;
-    return await $`docker-compose -f ${filename} -p ${stackName} up -d`;
+    return await $`docker-compose -f ${filename} -p ${stackName} up -d --force-recreate`;
   }
 
   async composeDown(composeString: string, stackName: string) {

@@ -22,7 +22,7 @@ export class DockerClient {
   async composeUpdate(composeString: string, stackName: string) {
     const filename = this.composeStringToTmp(composeString);
 
-    await $`docker-compose -f ${filename} down`;
+    await $`docker-compose -f ${filename} -p ${stackName} down`;
     await $`docker-compose -f ${filename} pull`;
     return await $`docker-compose -f ${filename} -p ${stackName} up -d --force-recreate`;
   }

@@ -86,6 +86,7 @@ export class WebhookServer {
 
   listen(port: number) {
     return serve({
+      idleTimeout: 90,
       fetch: this.app.fetch,
       port,
     });

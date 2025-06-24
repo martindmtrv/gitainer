@@ -249,9 +249,12 @@ export class GitainerServer {
     if (this.postWebhook) {
       console.log(`== Sending POST to ${this.postWebhook} ==`);
       await fetch(this.postWebhook, {
-        body: JSON.stringify(res, undefined, 2),
+        body: JSON.stringify({ body: res }, undefined, 2),
+        headers: {
+          "Content-Type": "application/json",
+        },
         method: "POST",
-      });
+      }).catch(err => console.error(err));
       console.log("== Sent webhook notification ==");
     }
 

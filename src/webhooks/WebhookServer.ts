@@ -4,15 +4,18 @@ import type { GitConsumer } from "../git/GitConsumer";
 import { prettyJSON } from "hono/pretty-json";
 import { stream } from 'hono/streaming';
 import { $, serve, ShellError } from "bun";
+import type { GitainerServer } from "../git/GitainerServer";
 
 export class WebhookServer {
   readonly app: Hono;
   readonly docker: DockerClient;
   readonly bareRepo: GitConsumer;
+  readonly gitainer: GitainerServer;
 
-  constructor(docker: DockerClient, bareRepo: GitConsumer) {
+  constructor(docker: DockerClient, bareRepo: GitConsumer, gitainer: GitainerServer) {
     this.docker = docker;
     this.bareRepo = bareRepo;
+    this.gitainer = gitainer;
     this.app = new Hono();
 
     this.app.use(prettyJSON());
@@ -28,8 +31,8 @@ export class WebhookServer {
           stream.onAbort(async () => {
             await proc.kill();
           });
-      
-          await stream.pipe(proc.stdout);       
+
+          await stream.pipe(proc.stdout);
         });
       });
     }
@@ -64,11 +67,25 @@ export class WebhookServer {
 
       try {
         const output = await docker.composeUpdate(stackFile, stackName);
-        return c.json({
+        const res = {
           stackName,
           msg: `Successfully updated stack ${stackName}`,
           output: output.text(),
-        });
+        };
+
+        if (this.gitainer.postWebhook) {
+          console.log(`== Sending POST to ${this.gitainer.postWebhook} ==`);
+          await fetch(this.gitainer.postWebhook, {
+            body: JSON.stringify({ body: JSON.stringify(res, undefined, 2) }),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          }).catch(err => console.error(err));
+          console.log("== Sent webhook notification ==");
+        }
+
+        return c.json(res);
       } catch (e) {
         console.error((e as ShellError).stderr.toString());
         return c.json({

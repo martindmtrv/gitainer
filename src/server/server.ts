@@ -18,7 +18,7 @@ const gitainer = new GitainerServer(
 );
 
 const bareRepo = await gitainer.initRepo();
-const webhook = new WebhookServer(docker, bareRepo);
+const webhook = new WebhookServer(docker, bareRepo, gitainer);
 
 gitainer.listen(3000);
 webhook.listen(8080);

@@ -18,7 +18,7 @@ export class GitainerServer {
   readonly postWebhook?: string;
 
   static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
-  
+
   bareRepo!: GitConsumer;
 
   private synthesisRunning: boolean = false;
@@ -26,7 +26,7 @@ export class GitainerServer {
   constructor(
     repoName: string,
     gitBranch: string,
-    repoDir: string, 
+    repoDir: string,
     gitainerDataPath: string,
     fragmentsPath: string,
     stacksPath: string,
@@ -62,18 +62,18 @@ export class GitainerServer {
         push.reject(409, "Synthesis in progress, please wait until it completes");
         return;
       }
-    
+
       push.log();
       push.log('Thanks for pushing! Gitainer will try to synthesize your stacks defined under /stacks now');
       push.log('If it fails, the change will be reverted by the server');
       push.log('Additional pushes will be rejected until synthesis is complete or rolls back');
       push.log('In case of a rollback, container / compose changes will not be automatically resynthesized');
       push.log();
-    
+
       push.accept();
-    
+
       this.synthesisRunning = true;
-    
+
       // attempt synthesis after a short delay
       setTimeout(async () => {
         await this.synthesisTime(true);
@@ -112,7 +112,7 @@ export class GitainerServer {
 
     // change branch to main
     const setMainPromise = new Promise((resolve, reject) => {
-      this.bareRepo.repo.raw([ 'symbolic-ref', 'HEAD', 'refs/heads/main' ], (err) => {
+      this.bareRepo.repo.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'], (err) => {
         if (err) {
           reject(err);
         }
@@ -140,12 +140,13 @@ export class GitainerServer {
       console.log(`diffing current tmpEnv to lastSynthesizedEnv`);
       const diff = await $`diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" ${this.gitainerDataPath}/lastSynthesizedEnv ${this.gitainerDataPath}/tmpEnv`.quiet();
 
-      console.log("diff exit code:", diff.exitCode);
+      // console.log("diff exit code:", diff.exitCode);
       console.log("no diff detected");
+      return;
     } catch (e) {
       // for some reason this diff command exits as an error
       const output = (e as ShellError).text();
-      console.log("diff exit code:", (e as ShellError).exitCode);
+      // console.log("diff exit code:", (e as ShellError).exitCode);
       console.log("diff output:");
       console.log(output);
 
@@ -160,7 +161,9 @@ export class GitainerServer {
     console.log("Checking for compose files that use these envs");
 
     const stacks = await this.bareRepo.listStacksWithEnvReference(modifiedEnvs);
-    await this.synthesisTime(false, stacks);
+    if (stacks.length > 0) {
+      await this.synthesisTime(false, stacks);
+    }
   }
 
   async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[]) {
@@ -179,18 +182,18 @@ export class GitainerServer {
     const fragmentStackChanges = await this.bareRepo.listStacksWithEnvReference([], fragmentChanges.map(fragment => fragment.file));
 
     const stackChanges = latestChanges
-      .filter(change => 
+      .filter(change =>
         [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME].includes(change.type) &&
         GitainerServer.stackPattern.test(change.file)
       );
 
     stackChanges.push(...fragmentStackChanges);
-  
+
     try {
       if (stackChanges.length == 0) {
         console.log("Change did not contain any stack changes, so this synthesis is a noop");
       }
-  
+
       // apply each stack change
       for (const change of stackChanges) {
         currentStack = change.file;
@@ -204,12 +207,12 @@ export class GitainerServer {
 
         await this.docker.composeUpdate(hydratedCompose, stackName);
       }
-  
+
       res = {
         msg: `Synthesis succeeded for ${stackChanges.length} stack(s)`,
         changes: stackChanges
       };
-  
+
       console.log(res.msg);
       await $`env > ${this.gitainerDataPath}/lastSynthesizedEnv`;
     } catch (e) {
@@ -228,10 +231,10 @@ export class GitainerServer {
         res = {
           ...res,
           err: "Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back",
-          suceededStacks: stackChanges.length === 0 || currentStack === stackChanges[0].file ? []: 
+          suceededStacks: stackChanges.length === 0 || currentStack === stackChanges[0].file ? [] :
             stackChanges
               .slice(
-                0, 
+                0,
                 stackChanges.findIndex(change => change.file === currentStack)
               ).map(stack => stack.file),
           failedStack: currentStack,
@@ -249,7 +252,7 @@ export class GitainerServer {
     if (this.postWebhook) {
       console.log(`== Sending POST to ${this.postWebhook} ==`);
       await fetch(this.postWebhook, {
-        body: JSON.stringify({ body: JSON.stringify(res, undefined, 2)}),
+        body: JSON.stringify({ body: JSON.stringify(res, undefined, 2) }),
         headers: {
           "Content-Type": "application/json",
         },

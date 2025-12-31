@@ -1,6 +1,10 @@
 import { DockerClient } from '../docker/DockerClient';
 import { GitainerServer } from '../git/GitainerServer';
 import { WebhookServer } from "../webhooks/WebhookServer";
+import { updateProcessEnv } from "../infisical/InfisicalProvider";
+
+// load dynamic env from infiscal
+await updateProcessEnv();
 
 const bareDir = process.env.GIT_ROOT as string;
 
@@ -22,3 +26,10 @@ const webhook = new WebhookServer(docker, bareRepo, gitainer);
 
 gitainer.listen(3000);
 webhook.listen(8080);
+
+if (process.env.INFISICAL_URL) {
+  setInterval(async () => {
+    await updateProcessEnv();
+    await gitainer.checkForStackEnvUpdate();
+  }, 60_000);
+}

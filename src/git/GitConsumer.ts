@@ -41,8 +41,8 @@ export class GitConsumer {
       // clear out the import lines and condense the compose empty newlines
       fileContents = GitConsumer.condenseNewLines(fileContents.replaceAll(GitConsumer.IMPORT_REGEX, ""));
 
-      console.log("= fragments to be imported =");
-      console.log(importedFragments);
+      // console.log("= fragments to be imported =");
+      // console.log(importedFragments);
 
       // get the fragments
       let fragmentsList = await Promise.all(importedFragments.map(fragment => this.getFileContents(fragment).then(content => {
@@ -64,9 +64,9 @@ export class GitConsumer {
       ].join("\n");
     }
 
-    console.log("= After resolving fragments =");
+    // console.log("= After resolving fragments =");
 
-    console.log(fileContents);
+    // console.log(fileContents);
 
     return fileContents;
   }
@@ -74,7 +74,7 @@ export class GitConsumer {
   async getFileContents(filePath: string): Promise<string | undefined> {
     return this.repo
       .show([`main:${filePath}`])
-      .catch((err: GitError )=> {
+      .catch((err: GitError) => {
         if (!err.message.includes("does not exist")) {
           console.error(err);
         }
@@ -134,8 +134,8 @@ export class GitConsumer {
       const matches: string[] = [];
       envVars.forEach(envVar => {
         if (
-          [`$${envVar}`, '${'+envVar+'}']
-          .some(envPattern => file.contents.includes(envPattern))
+          [`$${envVar}`, '${' + envVar + '}']
+            .some(envPattern => file.contents.includes(envPattern))
         ) {
           matches.push(envVar);
         }
@@ -168,7 +168,7 @@ export class GitConsumer {
 
     const stackNames = await this.getAllStackNames();
 
-    const promises = stackNames.map(name => 
+    const promises = stackNames.map(name =>
       this.getStack(name)
         .then(contents => {
           mkdirSync(`${dir}/stacks/${name}`, { recursive: true });

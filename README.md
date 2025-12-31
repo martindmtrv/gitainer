@@ -89,6 +89,27 @@ When actually deploying this compose file, it will be resolved as
 
 On startup, Gitainer checks the current set of environment variables against the last set of variables. If there is any differences, Gitainer will look through all stacks to see if any reference this variable and redeploy this stack if it does consume this variable.
 
+### Infisical (secrets)
+In addition to using environment variables, Gitainer also now supports Infisical for secrets and variables. Secrets will be pulled and merged into the set of environment varibles to be used as descibed above, on the following cadence:
+
+- Gitainer service startup
+- Git push
+- and every 60s interval
+
+Anytime variable changes are detected, any consuming services will be redeployed with the new value.
+
+To set this up, provide the following environment variables in your Gitainer deployment
+
+```
+  environment: 
+    INFISICAL_URL: <your infisical url>
+    INFISICAL_CLIENT_ID=<your infisical machine client id>
+    INFISICAL_CLIENT_SECRET=<your infisical machine client secret>
+
+    INFISICAL_PROJECT_ID=<infisical project id>
+    INFISICAL_PROJECT_ENVIRONMENT=<infisical project environment>
+```
+
 ## Fragments
 
 Docker compose also natively supports [fragments](https://docs.docker.com/reference/compose-file/fragments/). The limitation with fragments in regular Docker Compose is they require the anchor to be resolved within the same file, because [YAML documents are independant](https://github.com/docker/compose/issues/5621#issuecomment-499021562). Ultimately this means that they cannot be reused across multiple files when using built in options such as [merge](https://docs.docker.com/reference/compose-file/merge/) or [include](https://docs.docker.com/reference/compose-file/include/).

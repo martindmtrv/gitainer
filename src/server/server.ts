@@ -29,7 +29,8 @@ webhook.listen(8080);
 
 if (process.env.INFISICAL_URL) {
   setInterval(async () => {
-    await updateProcessEnv();
-    await gitainer.checkForStackEnvUpdate();
+    if (await updateProcessEnv()) {
+      await gitainer.checkForStackEnvUpdate();
+    }
   }, 60_000);
 }

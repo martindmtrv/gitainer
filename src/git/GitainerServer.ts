@@ -4,6 +4,7 @@ import { ResetMode } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
+import { updateProcessEnv } from '../infisical/InfisicalProvider';
 
 export class GitainerServer {
   readonly bareDir: string;
@@ -76,9 +77,11 @@ export class GitainerServer {
 
       // attempt synthesis after a short delay
       setTimeout(async () => {
+        // update process env on push
+        await updateProcessEnv();
         await this.synthesisTime(true);
         this.synthesisRunning = false;
-      }, 2000);
+      }, 2_000);
     });
   }
 

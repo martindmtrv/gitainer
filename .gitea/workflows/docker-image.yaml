@@ -11,6 +11,12 @@ jobs:
       - uses: actions/checkout@v4
         name: Check out code
 
+      - name: Build Test Image
+        run: docker build -f Dockerfile.test -t gitainer-test .
+
+      - name: Run Tests
+        run: docker run --privileged --rm -v $(pwd):/app -w /app gitainer-test
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

@@ -5,6 +5,7 @@ import { GitChangeType, type GitChange } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
+import { createInitialCommitWithReadme } from './gitUtils';
 
 export class GitainerServer {
   readonly bareDir: string;
@@ -112,6 +113,13 @@ export class GitainerServer {
     await $`echo "Gitainer Stacks" > ${repoDir}/description`;
     // TODO: make a default readme
     this.bareRepo = new GitConsumer(repoDir);
+
+    // Create initial blank commit to ensure main branch exists
+    try {
+      await createInitialCommitWithReadme(repoDir, this.repoName, "main");
+    } catch (e) {
+      console.error("Failed to create initial commit:", e);
+    }
 
     // change branch to main
     const setMainPromise = new Promise((resolve, reject) => {

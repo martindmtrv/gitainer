@@ -15,7 +15,7 @@ jobs:
         run: docker build -f Dockerfile.test -t gitainer-test .
 
       - name: Run Tests
-        run: docker run --privileged --rm -v ./:/app -w /app gitainer-test
+        run: docker run --privileged --rm -w /app gitainer-test
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

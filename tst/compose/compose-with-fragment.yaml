@@ -1,0 +1,9 @@
+#! fragments/labels.yaml
+services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: frag-app
+    stop_grace_period: 0s
+    labels:
+      <<: *labels

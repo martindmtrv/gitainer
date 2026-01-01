@@ -7,6 +7,7 @@ import { NotifyWebhookTestHelper } from "./helper/NotifyWebhookTestHelper";
 
 const TEST_ROOT = "./tst/resources";
 const TEST_COMPOSE_ROOT = "./tst/compose";
+const TEST_FRAGMENTS_ROOT = "./tst/fragments";
 
 let gitainer: GitainerServer;
 let postHelper: NotifyWebhookTestHelper;
@@ -15,12 +16,13 @@ let postHelper: NotifyWebhookTestHelper;
 
 async function initEmptyRepo() {
   const docker = new DockerClient();
+  process.env.FRAGMENTS_PATH = "fragments";
   gitainer = new GitainerServer(
     "docker",
     "main",
     TEST_ROOT + "/backend",
     TEST_ROOT + "/backend/data",
-    TEST_ROOT + "/backend/fragments",
+    "fragments",
     TEST_ROOT + "/backend/stacks",
     docker,
     false,
@@ -158,3 +160,47 @@ test("bad compose file, should fail to deploy", async () => {
 }, {
   timeout: 100_000,
 });
+
+test("push stack using fragments, should resolve and deploy", async () => {
+  await cloneAndConfigRepo();
+  const fragRoot = TEST_ROOT + "/client/docker/fragments";
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/fragstack";
+
+  mkdirSync(fragRoot, { recursive: true });
+  mkdirSync(stackRoot, { recursive: true });
+
+  await $`cp ${TEST_FRAGMENTS_ROOT}/labels.yaml ${fragRoot}/labels.yaml`;
+
+  // Create stack using fragment
+  await $`cp ${TEST_COMPOSE_ROOT}/compose-with-fragment.yaml ${stackRoot}/docker-compose.yaml`;
+
+  // Setup waiter
+  const postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push
+  await $`git add . && git commit -m "add fragment stack" && git push`.cwd(TEST_ROOT + "/client/docker");
+
+  await postPromise;
+
+  // Verify internal processing
+  const stack = await gitainer.bareRepo.getStack("fragstack");
+  expect(stack).toContain("x-labels: &labels");
+  expect(stack).toContain(`custom.label: fragment-verified`);
+  expect(stack).toContain("# === fragments start ===");
+
+  // Verify deployed container
+  // Inspect the container and filter for the label
+  const labels = await $`docker inspect frag-app --format '{{json .Config.Labels}}'`.json();
+  expect(labels["custom.label"]).toBe("fragment-verified");
+
+  // Cleanup container
+  await $`docker rm -f frag-app`;
+}, { timeout: 100_000 });

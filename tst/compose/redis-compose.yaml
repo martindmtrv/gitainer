@@ -1,4 +1,6 @@
 services:
   redis:
     container_name: redis
-    image: redis
+    image: alpine
+    command: sleep infinity
+    stop_grace_period: 0s

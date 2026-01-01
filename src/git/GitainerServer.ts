@@ -198,15 +198,24 @@ export class GitainerServer {
         GitainerServer.stackPattern.test(change.file)
       );
 
-    stackChanges.push(...fragmentStackChanges);
+    // deduplicate based on file
+    const uniqueChangesMap = new Map<string, GitChange>();
+    [...stackChanges, ...fragmentStackChanges].forEach(change => {
+      // we only want one entry per file
+      if (!uniqueChangesMap.has(change.file)) {
+        uniqueChangesMap.set(change.file, change);
+      }
+    });
+
+    const combinedStackChanges = Array.from(uniqueChangesMap.values());
 
     try {
-      if (stackChanges.length == 0) {
+      if (combinedStackChanges.length == 0) {
         console.log("Change did not contain any stack changes, so this synthesis is a noop");
       }
 
       // apply each stack change
-      for (const change of stackChanges) {
+      for (const change of combinedStackChanges) {
         currentStack = change.file;
         const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
         console.log(`== stack synthesis -> ${stackName} ==`);
@@ -220,8 +229,8 @@ export class GitainerServer {
       }
 
       res = {
-        msg: `Synthesis succeeded for ${stackChanges.length} stack(s)`,
-        changes: stackChanges
+        msg: `Synthesis succeeded for ${combinedStackChanges.length} stack(s)`,
+        changes: combinedStackChanges
       };
 
       console.log(res.msg);
@@ -242,11 +251,11 @@ export class GitainerServer {
         res = {
           ...res,
           err: "Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back",
-          suceededStacks: stackChanges.length === 0 || currentStack === stackChanges[0].file ? [] :
-            stackChanges
+          suceededStacks: combinedStackChanges.length === 0 || currentStack === combinedStackChanges[0].file ? [] :
+            combinedStackChanges
               .slice(
                 0,
-                stackChanges.findIndex(change => change.file === currentStack)
+                combinedStackChanges.findIndex(change => change.file === currentStack)
               ).map(stack => stack.file),
           failedStack: currentStack,
           latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,

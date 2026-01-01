@@ -49,6 +49,9 @@ export async function createInitialCommitWithReadme(repoDir: string, repoName: s
     // Format: <mode> blob <sha1>\t<filename>
     const treeHash = (await $`printf "100644 blob ${blobHash}\tREADME.md\n" | git --git-dir ${repoDir} mktree`.text()).trim();
 
+    await $`git --git-dir ${repoDir} config user.email "gitainer@localhost"`;
+    await $`git --git-dir ${repoDir} config user.name "Gitainer"`;
+
     // Create commit
     const commitHash = (await $`git --git-dir ${repoDir} commit-tree ${treeHash} -m "Initial commit"`.text()).trim();
 

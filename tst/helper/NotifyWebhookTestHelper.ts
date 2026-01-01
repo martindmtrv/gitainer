@@ -15,7 +15,7 @@ export class NotifyWebhookTestHelper {
       if (this.callback) {
         const body = await c.req.json();
         console.log("[NotifyWebhookTestHelper] got POST", body);
-        this.callback(body);
+        this.callback(JSON.parse(body.body));
       }
       return c.json({ ok: true });
     });

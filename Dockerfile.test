@@ -1,0 +1,23 @@
+FROM docker:27.1.2-dind
+
+# Install dependencies (git for tests, bash for scripts)
+RUN apk add --no-cache git bash npm diffutils ca-certificates wget musl-dev make gcompat
+
+# Install Bun via npm
+RUN npm install -g bun
+
+WORKDIR /app
+
+# Copy dependency definitions
+COPY package.json bun.lockb ./
+RUN bun install
+
+# Copy source
+COPY . .
+
+# Use custom entrypoint
+COPY test-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/test-entrypoint.sh
+
+ENTRYPOINT ["test-entrypoint.sh"]
+CMD ["bun", "test"]

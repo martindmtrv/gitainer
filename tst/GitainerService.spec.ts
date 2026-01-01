@@ -18,8 +18,8 @@ async function initEmptyRepo() {
   gitainer = new GitainerServer(
     "docker",
     "main",
-    TEST_ROOT + "/backend", 
-    TEST_ROOT + "/backend/data", 
+    TEST_ROOT + "/backend",
+    TEST_ROOT + "/backend/data",
     TEST_ROOT + "/backend/fragments",
     TEST_ROOT + "/backend/stacks",
     docker,
@@ -33,9 +33,10 @@ async function initEmptyRepo() {
 
 async function cloneAndConfigRepo() {
   await $`git clone http://localhost:3000/docker.git`.cwd(TEST_ROOT + "/client");
+
   await $`git config user.name "test"`.cwd(TEST_ROOT + "/client/docker");
   await $`git config user.email "test@test.com"`.cwd(TEST_ROOT + "/client/docker");
-  await $`git checkout -b main`.cwd(TEST_ROOT + "/client/docker");
+  await $`git config init.defaultBranch main`.cwd(TEST_ROOT + "/client/docker");
   await $`git config push.autoSetupRemote "true"`.cwd(TEST_ROOT + "/client/docker");
 }
 
@@ -43,7 +44,11 @@ beforeEach(async () => {
   postHelper = new NotifyWebhookTestHelper("/gitainer", 3005);
 
   // clean if there was anything
-  rmSync(TEST_ROOT, { recursive: true });
+  try {
+    rmSync(TEST_ROOT, { recursive: true });
+  } catch (e) {
+    // pass
+  }
 
   mkdirSync(TEST_ROOT);
   mkdirSync(TEST_ROOT + "/backend");
@@ -58,7 +63,12 @@ beforeEach(async () => {
 afterEach(async () => {
   await gitainer.close();
   postHelper.listener.stop(true);
-  rmSync(TEST_ROOT, { recursive: true });
+
+  try {
+    rmSync(TEST_ROOT, { recursive: true });
+  } catch (e) {
+    // pass
+  }
 
   // clean containers
   await $`docker rm -f redis`;
@@ -79,8 +89,8 @@ test("push redis stack, starts redis service and sends POST notification", async
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
       if (
-        body.msg === "Synthesis succeeded for 1 stack(s)" && 
-        body.changes?.length === 1 && 
+        body.msg === "Synthesis succeeded for 1 stack(s)" &&
+        body.changes?.length === 1 &&
         body.changes[0].file === "stacks/redis/docker-compose.yaml"
       ) {
         setTimeout(() => resolve(null), 1_000);
@@ -110,8 +120,8 @@ test("bad compose file, should fail to deploy", async () => {
   let postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
       if (
-        body.msg === "Synthesis succeeded for 1 stack(s)" && 
-        body.changes?.length === 1 && 
+        body.msg === "Synthesis succeeded for 1 stack(s)" &&
+        body.changes?.length === 1 &&
         body.changes[0].file === "stacks/redis/docker-compose.yaml"
       ) {
         setTimeout(() => resolve(null), 1_000);
@@ -130,7 +140,7 @@ test("bad compose file, should fail to deploy", async () => {
   postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
       if (
-        body.err?.includes("Got an error during synthesis") && 
+        body.err?.includes("Got an error during synthesis") &&
         body.failedStack === "stacks/redis/docker-compose.yaml"
       ) {
         setTimeout(() => resolve(null), 1_000);

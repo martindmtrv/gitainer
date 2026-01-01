@@ -13,9 +13,6 @@ RUN mkdir -p ${GOPATH}/src ${GOPATH}/bin
 # Install bun
 RUN apk update && apk add bash npm git diffutils
 RUN apk --no-cache add ca-certificates wget
-COPY build-deps/sgerrand.rsa.pub /etc/apk/keys/sgerrand.rsa.pub
-COPY build-deps/glibc-2.28-r0.apk .
-RUN apk add --no-cache --force-overwrite glibc-2.28-r0.apk
 RUN npm install -g bun
 
 # copy package.json

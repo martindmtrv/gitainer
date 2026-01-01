@@ -208,6 +208,7 @@ export class GitainerServer {
     });
 
     const combinedStackChanges = Array.from(uniqueChangesMap.values());
+    const successfullyProcessedStacks: { file: string, stackName: string, content: string }[] = [];
 
     try {
       if (combinedStackChanges.length == 0) {
@@ -226,6 +227,11 @@ export class GitainerServer {
         console.log(hydratedCompose);
 
         await this.docker.composeUpdate(hydratedCompose, stackName);
+        successfullyProcessedStacks.push({
+          file: change.file,
+          stackName,
+          content: hydratedCompose
+        });
       }
 
       res = {
@@ -261,8 +267,34 @@ export class GitainerServer {
           latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,
         };
 
+        // Rollback successful stacks
+        console.log("Rolling back successful stacks:", successfullyProcessedStacks.map(s => s.stackName));
+        for (const stack of successfullyProcessedStacks) {
+          try {
+            console.log(`Rolling back (down) ${stack.stackName} with new content`);
+            await this.docker.composeDown(stack.content, stack.stackName);
+          } catch (rollbackError) {
+            console.error(`Failed to down stack ${stack.stackName}`, rollbackError);
+          }
+        }
+
         // delete this commit
         await this.bareRepo.repo.reset(ResetMode.SOFT, ["HEAD^"]);
+
+        // Restore successful stacks to previous state
+        for (const stack of successfullyProcessedStacks) {
+          try {
+            const oldContent = await this.bareRepo.getStack(stack.stackName);
+            if (oldContent) {
+              console.log(`Restoring ${stack.stackName} to previous state`);
+              await this.docker.composeUpdate(oldContent, stack.stackName);
+            } else {
+              console.log(`Stack ${stack.stackName} did not exist in previous state, leaving it down`);
+            }
+          } catch (restoreError) {
+            console.error(`Failed to restore stack ${stack.stackName}`, restoreError);
+          }
+        }
       }
     }
 

@@ -204,3 +204,98 @@ test("push stack using fragments, should resolve and deploy", async () => {
   // Cleanup container
   await $`docker rm -f frag-app`;
 }, { timeout: 100_000 });
+
+test("rollback: multiple stacks, first valid, second invalid -> first reverts", async () => {
+  await cloneAndConfigRepo();
+  const stackARoot = TEST_ROOT + "/client/docker/stacks/stack-a";
+  const stackBRoot = TEST_ROOT + "/client/docker/stacks/stack-b";
+
+  mkdirSync(stackARoot, { recursive: true });
+  mkdirSync(stackBRoot, { recursive: true });
+
+  // Initial valid state for stack A
+  const composeA1 = `services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: stack-a
+    stop_grace_period: 0s
+    labels:
+      test.version: v1`;
+  await $`echo "${composeA1}" > ${stackARoot}/docker-compose.yaml`;
+
+  // Setup waiter for first push
+  let postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push initial stack A
+  await $`git add . && git commit -m "init stack a" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify stack A is v1
+  let labels = await $`docker inspect stack-a --format '{{json .Config.Labels}}'`.json();
+  expect(labels["test.version"]).toBe("v1");
+
+  // Prepare second push: Modify A (v2) and Add B (invalid)
+  // Stack A -> v2
+  // Stack A -> v2
+  const composeA2 = `services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: stack-a
+    stop_grace_period: 0s
+    labels:
+      test.version: v2`;
+  await $`echo "${composeA2}" > ${stackARoot}/docker-compose.yaml`;
+
+  // Stack B -> invalid
+  const composeB = `services:
+  app:
+    image: alpine
+    container_name:
+    labels:
+      test.version: v1`;
+  await $`echo "${composeB}" > ${stackBRoot}/docker-compose.yaml`;
+
+  // Setup waiter for failure
+  postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.err && body.err.includes("removing the bad commit")) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        // It might send success if rollback logic is broken?
+        console.log("Unexpected body:", body);
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push bad commit
+  await $`git add . && git commit -m "update a, add bad b" && git push`.cwd(TEST_ROOT + "/client/docker");
+
+  // Expect failure
+  await postPromise;
+
+  // Verify Stack A is ROLLED BACK to v1
+  labels = await $`docker inspect stack-a --format '{{json .Config.Labels}}'`.json();
+  expect(labels["test.version"]).toBe("v1");
+
+  // Verify Stack B does not exist
+  try {
+    await $`docker inspect stack-b --format '{{json .Config.Labels}}'`.json();
+    throw new Error("Stack B should not exist");
+  } catch (e) {
+    // pass
+  }
+
+  // Cleanup
+  await $`docker rm -f stack-a`;
+}, { timeout: 100_000 });

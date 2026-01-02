@@ -1,7 +1,7 @@
 FROM docker:27.1.2-dind
 
 # Install dependencies (git for tests, bash for scripts)
-RUN apk add --no-cache git bash npm diffutils ca-certificates wget musl-dev make gcompat
+RUN apk add --no-cache git bash npm diffutils ca-certificates wget musl-dev make gcompat curl
 
 # Install Bun via npm
 RUN npm install -g bun

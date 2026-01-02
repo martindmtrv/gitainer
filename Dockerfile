@@ -1,7 +1,7 @@
 FROM docker:27.1.2-alpine3.20
 
 # setup go 
-RUN apk add --no-cache git make musl-dev go
+RUN apk add --no-cache git make musl-dev go curl
 
 # Configure Go
 ENV GOROOT /usr/lib/go

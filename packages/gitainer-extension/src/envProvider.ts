@@ -3,6 +3,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 export class EnvProvider {
+    async getEnvMap(document: vscode.TextDocument): Promise<Record<string, string>> {
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (folder) {
+            const envPath = path.join(folder.uri.fsPath, '.env');
+            if (fs.existsSync(envPath)) {
+                const envContent = fs.readFileSync(envPath, 'utf8');
+                return this.parseEnv(envContent);
+            }
+        }
+        return {};
+    }
+
     async getHydratedContent(document: vscode.TextDocument): Promise<string> {
         const content = document.getText();
         const envVars = this.extractEnvVars(content);
@@ -10,19 +22,11 @@ export class EnvProvider {
             return "No environment variables found.";
         }
 
-        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        const envMap = await this.getEnvMap(document);
         const resolvedVars: Record<string, string | undefined> = {};
-
-        if (folder) {
-            const envPath = path.join(folder.uri.fsPath, '.env');
-            if (fs.existsSync(envPath)) {
-                const envContent = fs.readFileSync(envPath, 'utf8');
-                const envMap = this.parseEnv(envContent);
-                envVars.forEach(v => {
-                    resolvedVars[v] = envMap[v];
-                });
-            }
-        }
+        envVars.forEach(v => {
+            resolvedVars[v] = envMap[v];
+        });
 
         let output = "# Environment Variables Preview\n\n";
         output += "| Variable | Value | Status |\n";

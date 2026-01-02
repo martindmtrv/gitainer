@@ -103,7 +103,10 @@ test("push redis stack, starts redis service and sends POST notification", async
   });
 
   await $`cp ${TEST_COMPOSE_ROOT}/redis-compose.yaml ${redisRoot}/docker-compose.yaml`;
-  await $`git add . && git commit -m "add redis" && git push`.cwd(TEST_ROOT + "/client/docker");
+  const pushResult = await $`git add . && git commit -m "add redis" && git push 2>&1`.cwd(TEST_ROOT + "/client/docker").text();
+
+  expect(pushResult).toContain("remote: Gitainer: Starting synthesis...");
+  expect(pushResult).toContain("remote: Synthesis succeeded for 1 stack(s)");
 
   await postPromise;
 }, {
@@ -154,7 +157,10 @@ test("bad compose file, should fail to deploy", async () => {
 
   // make bad change
   await $`cp -f ${TEST_COMPOSE_ROOT}/bad-compose.yaml ${redisRoot}/docker-compose.yaml`;
-  await $`git add . && git commit -m "add bad file" && git push`.cwd(TEST_ROOT + "/client/docker");
+  const pushResult = await $`git add . && git commit -m "add bad file" && git push 2>&1`.cwd(TEST_ROOT + "/client/docker").text();
+
+  expect(pushResult).toContain("remote: Gitainer: Starting synthesis...");
+  expect(pushResult).toContain("remote: Got an error during synthesis, removing the bad commit");
 
   await postPromise;
 }, {

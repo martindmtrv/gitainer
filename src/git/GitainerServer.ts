@@ -69,20 +69,14 @@ export class GitainerServer {
       push.log('Thanks for pushing! Gitainer will try to synthesize your stacks defined under /stacks now');
       push.log('If it fails, the change will be reverted by the server');
       push.log('Additional pushes will be rejected until synthesis is complete or rolls back');
-      push.log('In case of a rollback, container / compose changes will not be automatically resynthesized');
       push.log();
 
       push.accept();
 
       this.synthesisRunning = true;
 
-      // attempt synthesis after a short delay
-      setTimeout(async () => {
-        // update process env on push
-        await updateProcessEnv();
-        await this.synthesisTime(true);
-        this.synthesisRunning = false;
-      }, 2_000);
+      // Note: Actual synthesis will be triggered by the post-receive hook
+      // calling /internal/synthesize to ensure output is piped back to the client.
     });
   }
 
@@ -111,7 +105,7 @@ export class GitainerServer {
 
     const repoDir = this.bareDir + `/${this.repoName}.git`;
     await $`echo "Gitainer Stacks" > ${repoDir}/description`;
-    // TODO: make a default readme
+
     this.bareRepo = new GitConsumer(repoDir);
 
     // Create initial blank commit to ensure main branch exists
@@ -132,6 +126,21 @@ export class GitainerServer {
     });
 
     await setMainPromise;
+
+    // Create post-receive hook to trigger synthesis and pipe output back to client
+    const hookPath = `${repoDir}/hooks/post-receive`;
+    const hookContent = `#!/bin/bash
+# Gitainer post-receive hook
+while read oldrev newrev refname
+do
+  if [ "$refname" = "refs/heads/${this.gitBranch}" ]; then
+    echo "remote: Gitainer: Starting synthesis..."
+    curl -s -X POST "http://localhost:3000/internal/synthesize?commit=$newrev"
+  fi
+done
+`;
+    await $`echo ${hookContent} > ${hookPath}`;
+    await $`chmod +x ${hookPath}`;
 
     return this.bareRepo;
   }
@@ -177,7 +186,12 @@ export class GitainerServer {
     }
   }
 
-  async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[]) {
+  async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[], logger?: (msg: string) => void) {
+    const log = (msg: string) => {
+      console.log(msg);
+      if (logger) logger(msg);
+    };
+
     const latestChanges = changes || await this.bareRepo.getChanges("HEAD");
     let res: any = {};
 
@@ -185,7 +199,7 @@ export class GitainerServer {
     let currentStack: string = "n/a";
     let hydratedCompose: string = 'n/a';
 
-    console.log(`=== Synthesis starting ===`);
+    log(`=== Synthesis starting ===`);
 
     const fragmentChanges = latestChanges
       .filter(change => change.file.startsWith(this.fragmentsPath + "/"));
@@ -194,8 +208,8 @@ export class GitainerServer {
 
     const stackChanges = latestChanges
       .filter(change =>
-        [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME, GitChangeType.DELETE].includes(change.type) ||
-        change.type.toString().startsWith("R") &&
+        ([GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME, GitChangeType.DELETE].includes(change.type) ||
+          change.type.toString().startsWith("R")) &&
         GitainerServer.stackPattern.test(change.file)
       );
 
@@ -213,19 +227,19 @@ export class GitainerServer {
 
     try {
       if (combinedStackChanges.length == 0) {
-        console.log("Change did not contain any stack changes, so this synthesis is a noop");
+        log("Change did not contain any stack changes, so this synthesis is a noop");
       }
 
       // apply each stack change
       for (const change of combinedStackChanges) {
         currentStack = change.file;
         const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
-        console.log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
+        log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
 
         if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || change.type.toString().startsWith("R")) {
           const oldContent = await this.bareRepo.getStack(stackName, "HEAD^");
           if (oldContent) {
-            console.log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
+            log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
             await this.docker.composeDown(oldContent, stackName);
           }
           if (change.type === GitChangeType.DELETE) {
@@ -235,7 +249,8 @@ export class GitainerServer {
 
         hydratedCompose = await this.bareRepo.getStack(stackName) as string;
 
-        console.log(`<= ${change.file} =>`);
+        log(`<= ${change.file} =>`);
+        // We don't log the full compose file to the git client as it can be very long
         console.log(hydratedCompose);
 
         await this.docker.composeUpdate(hydratedCompose, stackName);
@@ -251,10 +266,10 @@ export class GitainerServer {
         changes: combinedStackChanges
       };
 
-      console.log(res.msg);
+      log(res.msg);
       await $`env > ${this.gitainerDataPath}/lastSynthesizedEnv`;
     } catch (e) {
-      console.error(e);
+      log((e as Error).hasOwnProperty('message') ? (e as Error).message : String(e));
       wasSuccessful = false;
       res = {
         output: (e as ShellError)?.stderr?.toString() || (e as Error).message,
@@ -278,15 +293,16 @@ export class GitainerServer {
           failedStack: currentStack,
           latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,
         };
+        log(res.err);
 
         // Rollback successful stacks
-        console.log("Rolling back successful stacks:", successfullyProcessedStacks.map(s => s.stackName));
+        log(`Rolling back successful stacks: ${successfullyProcessedStacks.map(s => s.stackName).join(', ')}`);
         for (const stack of successfullyProcessedStacks) {
           try {
-            console.log(`Rolling back (down) ${stack.stackName} with new content`);
+            log(`Rolling back (down) ${stack.stackName} with new content`);
             await this.docker.composeDown(stack.content, stack.stackName);
           } catch (rollbackError) {
-            console.error(`Failed to down stack ${stack.stackName}`, rollbackError);
+            log(`Failed to down stack ${stack.stackName}: ${rollbackError}`);
           }
         }
 
@@ -298,31 +314,31 @@ export class GitainerServer {
           try {
             const oldContent = await this.bareRepo.getStack(stack.stackName);
             if (oldContent) {
-              console.log(`Restoring ${stack.stackName} to previous state`);
+              log(`Restoring ${stack.stackName} to previous state`);
               await this.docker.composeUpdate(oldContent, stack.stackName);
             } else {
-              console.log(`Stack ${stack.stackName} did not exist in previous state, leaving it down`);
+              log(`Stack ${stack.stackName} did not exist in previous state, leaving it down`);
             }
           } catch (restoreError) {
-            console.error(`Failed to restore stack ${stack.stackName}`, restoreError);
+            log(`Failed to restore stack ${stack.stackName}: ${restoreError}`);
           }
         }
       }
     }
 
-    console.log("=== Synthesis end ===");
+    log("=== Synthesis end ===");
     console.log(res);
 
     if (this.postWebhook) {
-      console.log(`== Sending POST to ${this.postWebhook} ==`);
+      log(`== Sending POST to ${this.postWebhook} ==`);
       await fetch(this.postWebhook, {
         body: JSON.stringify({ body: JSON.stringify(res, undefined, 2) }),
         headers: {
           "Content-Type": "application/json",
         },
         method: "POST",
-      }).catch(err => console.error(err));
-      console.log("== Sent webhook notification ==");
+      }).catch(err => log(err));
+      log("== Sent webhook notification ==");
     }
 
     // push all the current stack files to a dir
@@ -332,16 +348,36 @@ export class GitainerServer {
   }
 
   async listen(port: number) {
-    this.synthesisRunning = true;
-    this.repos.listen(3000, undefined, async () => {
-      console.log(await this.repos.list());
+    const originalHandle = this.repos.handle.bind(this.repos);
+    this.repos.handle = (req: any, res: any) => {
+      if (req.method === 'POST' && req.url.includes('/internal/synthesize')) {
+        (async () => {
+          try {
+            // update process env on synthesis
+            await updateProcessEnv();
+            await this.synthesisTime(true, undefined, (msg) => {
+              res.write(msg + "\n");
+            });
+            this.synthesisRunning = false;
+            res.end();
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(String(e));
+            this.synthesisRunning = false;
+          }
+        })();
+        return;
+      }
+
+      originalHandle(req, res);
+    };
+
+    this.repos.listen(port, undefined, () => {
       console.log(`Gitainer running at http://localhost:${port}`);
 
       if (this.stackUpdateOnEnvChange) {
         this.checkForStackEnvUpdate();
       }
-
-      this.synthesisRunning = false;
     });
   }
 

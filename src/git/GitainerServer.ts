@@ -24,6 +24,7 @@ export class GitainerServer {
   bareRepo!: GitConsumer;
 
   private synthesisRunning: boolean = false;
+  private listening: boolean = false;
 
   constructor(
     repoName: string,
@@ -108,11 +109,13 @@ export class GitainerServer {
 
     this.bareRepo = new GitConsumer(repoDir);
 
-    // Create initial blank commit to ensure main branch exists
-    try {
-      await createInitialCommitWithReadme(repoDir, this.repoName, "main");
-    } catch (e) {
-      console.error("Failed to create initial commit:", e);
+    // Create initial blank commit to ensure main branch exists if the repo is empty
+    if (await this.bareRepo.isEmpty()) {
+      try {
+        await createInitialCommitWithReadme(repoDir, this.repoName, "main");
+      } catch (e) {
+        console.error("Failed to create initial commit:", e);
+      }
     }
 
     // change branch to main
@@ -373,6 +376,7 @@ done
     };
 
     this.repos.listen(port, undefined, () => {
+      this.listening = true;
       console.log(`Gitainer running at http://localhost:${port}`);
 
       if (this.stackUpdateOnEnvChange) {
@@ -383,6 +387,9 @@ done
 
   async close() {
     this.repos.removeAllListeners();
-    await this.repos.close();
+    if (this.listening) {
+      await this.repos.close();
+      this.listening = false;
+    }
   }
 }

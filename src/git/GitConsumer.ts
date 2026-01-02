@@ -16,6 +16,15 @@ export class GitConsumer {
     this.repo = Git(path);
   }
 
+  async isEmpty(): Promise<boolean> {
+    try {
+      const count = await this.repo.raw(['rev-list', '--all', '--count']);
+      return parseInt(count.trim()) === 0;
+    } catch (e) {
+      return true;
+    }
+  }
+
   async getAllStackNames(): Promise<string[]> {
     const stacks = await this.getAllStacks();
 

@@ -4,6 +4,7 @@ import { EnvProvider } from './envProvider';
 import { HoverProvider } from './hoverProvider';
 import { PreviewPanel } from './previewPanel';
 import { CompletionProvider } from './completionProvider';
+import { CodeActionProvider } from './codeActionProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const hydrationProvider = new HydrationProvider();
@@ -20,9 +21,18 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerHoverProvider('yaml', hoverProvider),
         vscode.languages.registerHoverProvider('dockercompose', hoverProvider),
         vscode.languages.registerHoverProvider('docker-compose', hoverProvider),
-        vscode.languages.registerCompletionItemProvider('yaml', new CompletionProvider(hydrationProvider), '*'),
-        vscode.languages.registerCompletionItemProvider('dockercompose', new CompletionProvider(hydrationProvider), '*'),
-        vscode.languages.registerCompletionItemProvider('docker-compose', new CompletionProvider(hydrationProvider), '*')
+        vscode.languages.registerCompletionItemProvider('yaml', new CompletionProvider(hydrationProvider), '*', '#', ' ', '/'),
+        vscode.languages.registerCompletionItemProvider('dockercompose', new CompletionProvider(hydrationProvider), '*', '#', ' ', '/'),
+        vscode.languages.registerCompletionItemProvider('docker-compose', new CompletionProvider(hydrationProvider), '*', '#', ' ', '/'),
+        vscode.languages.registerCodeActionsProvider('yaml', new CodeActionProvider(hydrationProvider), {
+            providedCodeActionKinds: CodeActionProvider.providedCodeActionKinds
+        }),
+        vscode.languages.registerCodeActionsProvider('dockercompose', new CodeActionProvider(hydrationProvider), {
+            providedCodeActionKinds: CodeActionProvider.providedCodeActionKinds
+        }),
+        vscode.languages.registerCodeActionsProvider('docker-compose', new CodeActionProvider(hydrationProvider), {
+            providedCodeActionKinds: CodeActionProvider.providedCodeActionKinds
+        })
     );
 }
 

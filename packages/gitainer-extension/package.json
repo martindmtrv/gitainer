@@ -4,6 +4,7 @@
     "description": "Preview Gitainer stack hydration and environment variables",
     "version": "0.0.1",
     "publisher": "gitainer",
+    "license": "MIT",
     "repository": {
         "type": "git",
         "url": "https://github.com/martindmtrv/gitainer.git"

@@ -26,14 +26,22 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         }
 
         // 2. Check if the user is typing a fragment import (after '#!')
-        if (lineText.includes('#!')) {
-            return await this.provideFragmentPathCompletions(document, position);
+        if (line.text.startsWith('#!')) {
+            // Ensure the cursor is after '#!'
+            const hashBangIndex = line.text.indexOf('#!');
+            if (position.character > hashBangIndex + 1) {
+                return await this.provideFragmentPathCompletions(document, position, hashBangIndex);
+            }
         }
 
         return [];
     }
 
-    private async provideFragmentPathCompletions(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.CompletionItem[]> {
+    private async provideFragmentPathCompletions(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        hashBangIndex: number
+    ): Promise<vscode.CompletionItem[]> {
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
         if (!folder) {
             return [];
@@ -41,6 +49,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
         const files = await vscode.workspace.findFiles('**/*.{yaml,yml}');
         const items: vscode.CompletionItem[] = [];
+
+        // Calculate the range to replace: everything after '#!'
+        const lineText = document.lineAt(position.line).text;
+        const range = new vscode.Range(
+            position.line,
+            hashBangIndex + 2,
+            position.line,
+            lineText.length
+        );
 
         for (const file of files) {
             let relativePath = path.relative(folder.uri.fsPath, file.fsPath);
@@ -51,13 +68,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
             }
 
             const item = new vscode.CompletionItem(relativePath, vscode.CompletionItemKind.File);
+            item.range = range;
+            item.insertText = ' ' + relativePath;
 
             // Check for required anchors in this fragment
             const fragmentContent = await this.hydrationProvider.getFragmentContent(relativePath, document);
             if (fragmentContent) {
                 const requiredAnchors = await this.getRequiredAnchors(fragmentContent);
                 if (requiredAnchors.length > 0) {
-                    item.detail = `Requires anchors: ${requiredAnchors.join(', ')}`;
+                    item.detail = `Requires: ${requiredAnchors.join(', ')}`;
 
                     // Add additionalTextEdits to autofill anchors above the import line
                     const edit = new vscode.TextEdit(

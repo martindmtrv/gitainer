@@ -22,11 +22,11 @@ export class GitConsumer {
     return stacks.map(stack => (GitainerServer.stackPattern.exec(stack.file) as RegExpExecArray)[1])
   }
 
-  async getStack(stackName: string): Promise<string | undefined> {
-    let fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yaml`);
+  async getStack(stackName: string, ref: string = "main"): Promise<string | undefined> {
+    let fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yaml`, ref);
 
     if (!fileContents) {
-      fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yml`);
+      fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yml`, ref);
     }
 
     if (!fileContents) {
@@ -41,13 +41,10 @@ export class GitConsumer {
       // clear out the import lines and condense the compose empty newlines
       fileContents = GitConsumer.condenseNewLines(fileContents.replaceAll(GitConsumer.IMPORT_REGEX, ""));
 
-      // console.log("= fragments to be imported =");
-      // console.log(importedFragments);
-
       // get the fragments
-      let fragmentsList = await Promise.all(importedFragments.map(fragment => this.getFileContents(fragment).then(content => {
+      let fragmentsList = await Promise.all(importedFragments.map(fragment => this.getFileContents(fragment, ref).then(content => {
         if (!content) {
-          throw new Error(`Fragment ${fragment} does not exist`);
+          throw new Error(`Fragment ${fragment} does not exist in ${ref}`);
         }
 
         return `# fragment -> ${fragment}\n` + GitConsumer.condenseNewLines(content);
@@ -64,16 +61,12 @@ export class GitConsumer {
       ].join("\n");
     }
 
-    // console.log("= After resolving fragments =");
-
-    // console.log(fileContents);
-
     return fileContents;
   }
 
-  async getFileContents(filePath: string): Promise<string | undefined> {
+  async getFileContents(filePath: string, ref: string = "main"): Promise<string | undefined> {
     return this.repo
-      .show([`main:${filePath}`])
+      .show([`${ref}:${filePath}`])
       .catch((err: GitError) => {
         if (!err.message.includes("does not exist")) {
           console.error(err);

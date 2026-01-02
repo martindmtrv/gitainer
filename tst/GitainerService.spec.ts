@@ -299,3 +299,60 @@ test("rollback: multiple stacks, first valid, second invalid -> first reverts", 
   // Cleanup
   await $`docker rm -f stack-a`;
 }, { timeout: 100_000 });
+
+test("delete stack: push deletion -> stack is downed", async () => {
+  await cloneAndConfigRepo();
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/deleteme";
+  mkdirSync(stackRoot, { recursive: true });
+
+  const compose = `services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: deleteme-app
+    stop_grace_period: 0s`;
+  await $`echo "${compose}" > ${stackRoot}/docker-compose.yaml`;
+
+  // Setup waiter for deploy
+  let postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push to deploy
+  await $`git add . && git commit -m "add stack to delete" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify it's running
+  await $`docker inspect deleteme-app`.quiet();
+
+  // Setup waiter for deletion
+  postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Delete stack file and push
+  rmSync(stackRoot, { recursive: true });
+  await $`git add . && git commit -m "delete stack" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify it's gone
+  try {
+    await $`docker inspect deleteme-app`.quiet();
+    throw new Error("Container should have been deleted");
+  } catch (e) {
+    // success: container not found
+  }
+
+}, { timeout: 100_000 });

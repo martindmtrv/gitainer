@@ -194,7 +194,8 @@ export class GitainerServer {
 
     const stackChanges = latestChanges
       .filter(change =>
-        [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME].includes(change.type) &&
+        [GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME, GitChangeType.DELETE].includes(change.type) ||
+        change.type.toString().startsWith("R") &&
         GitainerServer.stackPattern.test(change.file)
       );
 
@@ -219,7 +220,18 @@ export class GitainerServer {
       for (const change of combinedStackChanges) {
         currentStack = change.file;
         const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
-        console.log(`== stack synthesis -> ${stackName} ==`);
+        console.log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
+
+        if (change.type === GitChangeType.DELETE || change.type.toString().startsWith("R")) {
+          const oldContent = await this.bareRepo.getStack(stackName, "HEAD^");
+          if (oldContent) {
+            console.log(`Deconfiguring ${stackName} (deleted or renamed)`);
+            await this.docker.composeDown(oldContent, stackName);
+          }
+          if (change.type === GitChangeType.DELETE) {
+            continue;
+          }
+        }
 
         hydratedCompose = await this.bareRepo.getStack(stackName) as string;
 

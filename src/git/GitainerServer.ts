@@ -222,10 +222,10 @@ export class GitainerServer {
         const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
         console.log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
 
-        if (change.type === GitChangeType.DELETE || change.type.toString().startsWith("R")) {
+        if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || change.type.toString().startsWith("R")) {
           const oldContent = await this.bareRepo.getStack(stackName, "HEAD^");
           if (oldContent) {
-            console.log(`Deconfiguring ${stackName} (deleted or renamed)`);
+            console.log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
             await this.docker.composeDown(oldContent, stackName);
           }
           if (change.type === GitChangeType.DELETE) {

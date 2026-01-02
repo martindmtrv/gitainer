@@ -356,3 +356,79 @@ test("delete stack: push deletion -> stack is downed", async () => {
   }
 
 }, { timeout: 100_000 });
+
+test("modify stack: remove service -> removed service container is cleaned up", async () => {
+  await cloneAndConfigRepo();
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/cleanup-test";
+  mkdirSync(stackRoot, { recursive: true });
+
+  const composev1 = `services:
+  app-a:
+    image: alpine
+    command: sleep infinity
+    container_name: cleanup-app-a
+    stop_grace_period: 0s
+  app-b:
+    image: alpine
+    command: sleep infinity
+    container_name: cleanup-app-b
+    stop_grace_period: 0s`;
+  await $`echo "${composev1}" > ${stackRoot}/docker-compose.yaml`;
+
+  // Setup waiter for deploy v1
+  let postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push to deploy v1
+  await $`git add . && git commit -m "add stack with two services" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify both are running
+  await $`docker inspect cleanup-app-a`.quiet();
+  await $`docker inspect cleanup-app-b`.quiet();
+
+  // Modify to remove app-b
+  const composev2 = `services:
+  app-a:
+    image: alpine
+    command: sleep infinity
+    container_name: cleanup-app-a
+    stop_grace_period: 0s`;
+  await $`echo "${composev2}" > ${stackRoot}/docker-compose.yaml`;
+
+  // Setup waiter for deploy v2
+  postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push to deploy v2
+  await $`git add . && git commit -m "remove service app-b" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify app-a is still running
+  await $`docker inspect cleanup-app-a`.quiet();
+
+  // Verify app-b is GONE
+  try {
+    await $`docker inspect cleanup-app-b`.quiet();
+    throw new Error("Container cleanup-app-b should have been deleted");
+  } catch (e) {
+    // success: container not found
+  }
+
+  // Cleanup
+  await $`docker rm -f cleanup-app-a`;
+}, { timeout: 100_000 });

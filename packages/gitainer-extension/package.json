@@ -4,6 +4,10 @@
     "description": "Preview Gitainer stack hydration and environment variables",
     "version": "0.0.1",
     "publisher": "gitainer",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/martindmtrv/gitainer.git"
+    },
     "engines": {
         "vscode": "^1.85.0"
     },
@@ -31,13 +35,14 @@
         ]
     },
     "scripts": {
-        "vscode:prepublish": "npm run compile",
+        "vscode:prepublish": "bun run compile",
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
-        "pretest": "npm run compile && npm run lint",
+        "pretest": "bun run compile && bun run lint",
         "lint": "eslint src --ext ts",
         "test": "node ./out/test/runTest.js",
-        "package": "vsce package"
+        "package": "vsce package",
+        "publish": "vsce publish"
     },
     "devDependencies": {
         "@types/vscode": "^1.85.0",

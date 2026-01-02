@@ -34,10 +34,29 @@ Preview Gitainer stack hydration and environment variables directly in VS Code.
 3. Click the `...` (Views and More Actions) menu and select **Install from VSIX...**.
 4. Select the generated `gitainer-extension-0.0.1.vsix` file.
 
-## Usage
+### Advanced Features
 
-- Open a `docker-compose.yaml` file.
-- Use the command palette (`Ctrl+Shift+P`) and search for:
-  - `Gitainer: Preview Hydration`
-  - `Gitainer: Preview Env Variables`
-- Hover over any line starting with `#!` to see the fragment preview.
+- **Variable Hovers**: Hover over `$VAR` to see resolved values.
+- **Anchor Hovers/Completion**: Hover over `*anchor` to see its source fragment, and get completions for anchors defined in fragments.
+- **Anchor Autofill**: Automatically insert required anchor templates when importing fragments.
+
+## Publishing
+
+To publish the extension to the VS Code Marketplace:
+
+1. Create a publisher at [Manage Publishers](https://marketplace.visualstudio.com/manage).
+2. Create a Personal Access Token (PAT) in Azure DevOps with `Marketplace -> Publish` scope.
+3. Use the helper script:
+   ```bash
+   ./publish.sh <YOUR_PAT>
+   ```
+   Or run the bun script:
+   ```bash
+   bun run publish -- -p <YOUR_PAT>
+   ```
+
+## Development
+
+- `bun run compile`: Build the extension.
+- `bun run watch`: Build and watch for changes.
+- `bun run package`: Create a `.vsix` file.

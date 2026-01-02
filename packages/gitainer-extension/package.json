@@ -1,0 +1,56 @@
+{
+    "name": "gitainer-extension",
+    "displayName": "Gitainer",
+    "description": "Preview Gitainer stack hydration and environment variables",
+    "version": "0.0.1",
+    "publisher": "gitainer",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onCommand:gitainer.previewHydration",
+        "onCommand:gitainer.previewEnv",
+        "onLanguage:yaml",
+        "onLanguage:dockercompose",
+        "onLanguage:docker-compose"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "gitainer.previewHydration",
+                "title": "Gitainer: Preview Hydration"
+            },
+            {
+                "command": "gitainer.previewEnv",
+                "title": "Gitainer: Preview Env Variables"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "pretest": "npm run compile && npm run lint",
+        "lint": "eslint src --ext ts",
+        "test": "node ./out/test/runTest.js",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.85.0",
+        "@types/glob": "^8.1.0",
+        "@types/mocha": "^10.0.6",
+        "@types/node": "18.x",
+        "@typescript-eslint/eslint-plugin": "^6.15.0",
+        "@typescript-eslint/parser": "^6.15.0",
+        "eslint": "^8.56.0",
+        "glob": "^10.3.10",
+        "mocha": "^10.2.0",
+        "typescript": "^5.3.3",
+        "@vscode/test-electron": "^2.3.8",
+        "@vscode/vsce": "^2.32.0"
+    }
+}

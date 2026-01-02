@@ -18,12 +18,13 @@ RUN npm install -g bun
 # copy package.json
 RUN mkdir -p /home/gitainer/node_modules
 WORKDIR /home/gitainer
-COPY package*.json ./
+COPY bun.lockb ./
+COPY packages/gitainer/package.json ./
 
 # install deps
 RUN bun install
 
-COPY . .
+COPY packages/gitainer/ .
 RUN mkdir -p /var/gitainer/repo
 RUN mkdir -p /var/gitainer/data
 EXPOSE 3000

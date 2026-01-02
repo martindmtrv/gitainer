@@ -9,14 +9,14 @@ RUN npm install -g bun
 WORKDIR /app
 
 # Copy dependency definitions
-COPY package.json bun.lockb ./
+COPY bun.lockb packages/gitainer/package.json ./
 RUN bun install
 
 # Copy source
-COPY . .
+COPY packages/gitainer/ .
 
 # Use custom entrypoint
-COPY test-entrypoint.sh /usr/local/bin/
+COPY packages/gitainer/test-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/test-entrypoint.sh
 
 ENTRYPOINT ["test-entrypoint.sh"]

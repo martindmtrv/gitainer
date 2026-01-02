@@ -12,7 +12,7 @@ jobs:
         name: Check out code
 
       - name: Build Test Image
-        run: docker build -f Dockerfile.test -t gitainer-test .
+        run: docker build -f packages/gitainer/Dockerfile.test -t gitainer-test .
 
       - name: Run Tests
         run: docker run --privileged --rm -w /app gitainer-test
@@ -34,6 +34,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: packages/gitainer/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |

@@ -1,19 +1,6 @@
 {
-  "name": "gitainer",
-  "module": "src/server/server.ts",
-  "type": "module",
-  "scripts": {
-    "start": "bun run --watch src/server/server.ts",
-    "migrate": "bun run src/migration/PortainerMigration.ts",
-    "test:docker:build": "docker build -f Dockerfile.test -t gitainer-test .",
-    "test:docker": "docker run --privileged --rm -w /app gitainer-test"
-  },
-  "dependencies": {
-    "@infisical/sdk": "^4.0.6",
-    "@types/bun": "^1.1.6",
-    "concurrently": "^8.2.2",
-    "hono": "^4.5.5",
-    "node-git-server": "^1.0.0",
-    "simple-git": "^3.25.0"
-  }
+    "name": "gitainer",
+    "workspaces": [
+        "packages/*"
+    ]
 }

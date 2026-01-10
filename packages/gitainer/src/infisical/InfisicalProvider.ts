@@ -7,39 +7,52 @@ export async function getInfisicalProvider() {
     return client;
   }
 
-  client = new InfisicalSDK({
-    siteUrl: process.env.INFISICAL_URL as string,
-  });
+  try {
+    const newClient = new InfisicalSDK({
+      siteUrl: process.env.INFISICAL_URL as string,
+    });
 
-  // Authenticate with Infisical
-  await client.auth().universalAuth.login({
-    clientId: process.env.INFISICAL_CLIENT_ID as string,
-    clientSecret: process.env.INFISICAL_CLIENT_SECRET as string,
-  });
+    // Authenticate with Infisical
+    await newClient.auth().universalAuth.login({
+      clientId: process.env.INFISICAL_CLIENT_ID as string,
+      clientSecret: process.env.INFISICAL_CLIENT_SECRET as string,
+    });
 
-  return client;
+    client = newClient;
+    return client;
+  } catch (e) {
+    console.error("Failed to initialize or authenticate Infisical SDK:", e);
+    throw e;
+  }
 }
 
-export async function getSecrets(): Promise<Secret[]> {
+export async function getSecrets(): Promise<Secret[] | undefined> {
   if (!process.env.INFISICAL_URL) {
-    return [];
+    return undefined;
   }
 
-  console.log("== fetching infiscal secrets ==");
+  console.log("== fetching Infisical secrets ==");
 
-  const client = await getInfisicalProvider();
+  try {
+    const client = await getInfisicalProvider();
 
-  return (await client.secrets().listSecrets({
-    environment: process.env.INFISICAL_PROJECT_ENVIRONMENT as string,
-    projectId: process.env.INFISICAL_PROJECT_ID as string,
-  })).secrets;
+    const result = await client.secrets().listSecrets({
+      environment: process.env.INFISICAL_PROJECT_ENVIRONMENT as string,
+      projectId: process.env.INFISICAL_PROJECT_ID as string,
+    });
+
+    return result.secrets;
+  } catch (e) {
+    console.error("Failed to fetch secrets from Infisical:", e);
+    return undefined;
+  }
 }
 
 export async function updateProcessEnv(): Promise<boolean> {
   const secrets = await getSecrets();
 
-  if (secrets) {
-    console.log("== updating process.env from infiscal ==");
+  if (secrets && secrets.length > 0) {
+    console.log("== updating process.env from Infisical ==");
     const newEnv: Record<string, string> = {};
 
     secrets.forEach(secret => {

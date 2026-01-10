@@ -3,7 +3,7 @@ import { GitainerServer } from '../git/GitainerServer';
 import { WebhookServer } from "../webhooks/WebhookServer";
 import { updateProcessEnv } from "../infisical/InfisicalProvider";
 
-// load dynamic env from infiscal
+// load dynamic env from infisical
 await updateProcessEnv();
 
 const bareDir = process.env.GIT_ROOT as string;

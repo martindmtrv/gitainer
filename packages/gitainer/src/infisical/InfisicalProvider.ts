@@ -56,7 +56,12 @@ export async function updateProcessEnv(): Promise<boolean> {
     const newEnv: Record<string, string> = {};
 
     secrets.forEach(secret => {
-      newEnv[secret.secretKey] = secret.secretValue;
+      let value = secret.secretValue;
+      if (value.includes('\n')) {
+        console.warn(`[Infisical] Secret "${secret.secretKey}" contains newlines. Flattening to single line.`);
+        value = value.replace(/\n/g, ' ');
+      }
+      newEnv[secret.secretKey] = value;
     });
 
     Object.assign(process.env, newEnv);

@@ -175,8 +175,9 @@ done
 
       modifiedEnvs = output
         .split("\n")
-        .slice(0, -1)
-        .map(env => env.slice(0, env.indexOf("=")));
+        .filter(env => env.includes("="))
+        .map(env => env.slice(0, env.indexOf("=")))
+        .filter(key => key.length > 0);
 
       console.log("Detected env changes", modifiedEnvs);
     }

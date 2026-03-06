@@ -1,10 +1,12 @@
 FROM docker:27.1.2-dind
 
 # Install dependencies (git for tests, bash for scripts)
-RUN apk add --no-cache git bash npm diffutils ca-certificates wget musl-dev make gcompat curl
+RUN apk add --no-cache git bash diffutils ca-certificates wget musl-dev make gcompat curl unzip
 
-# Install Bun via npm
-RUN npm install -g bun
+# Install Bun directly
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+RUN curl -fsSL https://bun.sh/install | bash
 
 WORKDIR /app
 

@@ -1,15 +1,15 @@
 FROM docker:27.1.2-alpine3.20
 
-LABEL org.opencontainers.image.source https://github.com/martindmtrv/gitainer
-LABEL org.opencontainers.image.description "Simple Git-based container management platform for Docker Standalone"
+LABEL org.opencontainers.image.source=https://github.com/martindmtrv/gitainer
+LABEL org.opencontainers.image.description="Simple Git-based container management platform for Docker Standalone"
 
 # setup go 
 RUN apk add --no-cache git make musl-dev go curl
 
 # Configure Go
-ENV GOROOT /usr/lib/go
-ENV GOPATH /go
-ENV PATH /go/bin:$PATH
+ENV GOROOT=/usr/lib/go
+ENV GOPATH=/go
+ENV PATH=/go/bin:$PATH
 
 RUN mkdir -p ${GOPATH}/src ${GOPATH}/bin
 

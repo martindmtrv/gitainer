@@ -14,9 +14,10 @@ ENV PATH /go/bin:$PATH
 RUN mkdir -p ${GOPATH}/src ${GOPATH}/bin
 
 # Install bun
-RUN apk update && apk add bash npm git diffutils
-RUN apk --no-cache add ca-certificates wget
-RUN npm install -g bun
+RUN apk update && apk add bash git diffutils
+RUN apk --no-cache add ca-certificates wget curl
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
 
 # copy package.json
 RUN mkdir -p /home/gitainer/node_modules

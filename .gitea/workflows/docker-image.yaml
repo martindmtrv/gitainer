@@ -19,7 +19,7 @@ jobs:
 
   build-publish-github:
     needs: test
-    uses: martin/chromart-gitea-actions/.gitea/workflows/docker-publish-ghcr@main
+    uses: martin/chromart-gitea-actions/.gitea/workflows/docker-publish-ghcr.yaml@main
     with:
       image_name: ghcr.io/martindmtrv/gitainer
       file: packages/gitainer/Dockerfile

@@ -17,7 +17,7 @@ Deploy the stack with docker compose
 ```
 services:
   gitainer:
-    image: gitea.chromart.cc/martin/gitainer
+    image: ghcr.io/martindmtrv/gitainer
     volumes:
       - ./resources/bare:/var/gitainer/repo      
       - ./resources/data:/var/gitainer/data
@@ -266,7 +266,7 @@ cp portainer-backup*.tar.gz /tmp/migration/
 Run Docker command with a one off container, with the /var/gitainer/migration directory mounted as the directory we just created.
 
 ```
-docker run --rm -it -v /tmp/migration:/var/gitainer/migration gitea.chromart.cc/martin/gitainer migrate-portainer
+docker run --rm -it -v /tmp/migration:/var/gitainer/migration ghcr.io/martindmtrv/gitainer migrate-portainer
 ```
 
 Now copy the contents of the output folder to your Gitainer repo:

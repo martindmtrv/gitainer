@@ -206,6 +206,39 @@ services:
       <<: [*specific_labels]
 ```
 
+### Fragment Aliases
+
+Often you'll want to reuse the same fragment multiple times in a single compose file. This is normally impossible since duplicate anchors would collide. 
+Gitainer solves this by introducing **Fragment Aliases**. When you provide the `as <alias>` syntax, Gitainer suffixes all defined and referenced anchors (`&anchor` and `*anchor`) inside the fragment with `-<alias>`.
+
+fragments/db.yaml
+```yaml
+x-database: &postgres
+  image: postgres:15
+  restart: unless-stopped
+  environment:
+    POSTGRES_PASSWORD: *db_password
+```
+
+In your stack `docker-compose.yaml`:
+```yaml
+x-secrets:
+  x-primary-pw: &db_password-primary "securepass1"
+  x-replica-pw: &db_password-replica "securepass2"
+
+#! fragments/db.yaml as primary
+#! fragments/db.yaml as replica
+
+services:
+  app-db:
+    <<: *postgres-primary
+    container_name: primary-db
+  
+  replica-db:
+    <<: *postgres-replica
+    container_name: replica-db
+```
+
 ## Motivation
 
 Since getting in to selfhosting about 2 years ago, I have used Portainer to manage Docker stacks. After using it for a while, I found many areas in which I thought the core experience of managing stacks could be improved.

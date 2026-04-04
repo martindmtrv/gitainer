@@ -211,6 +211,62 @@ test("push stack using fragments, should resolve and deploy", async () => {
   await $`docker rm -f frag-app`;
 }, { timeout: 100_000 });
 
+test("push stack using fragment aliases, should append suffix to anchors and deploy", async () => {
+  await cloneAndConfigRepo();
+  const fragRoot = TEST_ROOT + "/client/docker/fragments";
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/aliasstack";
+
+  mkdirSync(fragRoot, { recursive: true });
+  mkdirSync(stackRoot, { recursive: true });
+
+  await $`cp ${TEST_FRAGMENTS_ROOT}/labels.yaml ${fragRoot}/labels.yaml`;
+
+  // Create stack using fragment with alias
+  const aliasCompose = `
+#! fragments/labels.yaml as myalias
+services:
+  alias-app:
+    image: alpine
+    command: sleep infinity
+    container_name: alias-app
+    stop_grace_period: 0s
+    labels:
+      <<: *labels-myalias
+  `;
+  await $`echo "${aliasCompose}" > ${stackRoot}/docker-compose.yaml`;
+
+  // Setup waiter
+  const postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push
+  await $`git add . && git commit -m "add alias fragment stack" && git push`.cwd(TEST_ROOT + "/client/docker");
+
+  await postPromise;
+
+  // Verify internal processing
+  const stack = await gitainer.bareRepo.getStack("aliasstack");
+  expect(stack).toContain("x-labels: &labels-myalias");
+  expect(stack).toContain(`custom.label: fragment-verified`);
+  expect(stack).toContain("# === fragments start ===");
+
+  // Verify deployed container
+  // Inspect the container and filter for the label
+  const labels = await $`docker inspect alias-app --format '{{json .Config.Labels}}'`.json();
+  expect(labels["custom.label"]).toBe("fragment-verified");
+
+  // Cleanup container
+  await $`docker rm -f alias-app`;
+}, { timeout: 100_000 });
+
+
 test("rollback: multiple stacks, first valid, second invalid -> first reverts", async () => {
   await cloneAndConfigRepo();
   const stackARoot = TEST_ROOT + "/client/docker/stacks/stack-a";

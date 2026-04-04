@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
 export class GitConsumer {
   readonly repo: SimpleGit;
 
-  static readonly IMPORT_REGEX: RegExp = /^#!\s*(.*?)\s*$/mg;
+  static readonly IMPORT_REGEX: RegExp = /^#!\s*(.*?)(?:\s+as\s+([a-zA-Z0-9_-]+))?\s*$/mg;
 
   static condenseNewLines(str: string): string {
     return str.split('\n').filter(line => line).join('\n');
@@ -44,19 +44,27 @@ export class GitConsumer {
 
     // append extensions
     if (process.env.FRAGMENTS_PATH) {
-      // fragment import like #!<fragmentpath>
-      let importedFragments = Array.from(fileContents.matchAll(GitConsumer.IMPORT_REGEX)).map(match => match[1]).filter(importLine => importLine !== "#!");
+      // fragment import like #!<fragmentpath> optionally with alias `as <alias>`
+      let importedFragments = Array.from(fileContents.matchAll(GitConsumer.IMPORT_REGEX)).map(match => ({
+        path: match[1],
+        alias: match[2],
+      })).filter(importObj => importObj.path !== "#!");
 
       // clear out the import lines and condense the compose empty newlines
       fileContents = GitConsumer.condenseNewLines(fileContents.replaceAll(GitConsumer.IMPORT_REGEX, ""));
 
       // get the fragments
-      let fragmentsList = await Promise.all(importedFragments.map(fragment => this.getFileContents(fragment, ref).then(content => {
+      let fragmentsList = await Promise.all(importedFragments.map(fragment => this.getFileContents(fragment.path, ref).then(content => {
         if (!content) {
-          throw new Error(`Fragment ${fragment} does not exist in ${ref}`);
+          throw new Error(`Fragment ${fragment.path} does not exist in ${ref}`);
         }
 
-        return `# fragment -> ${fragment}\n` + GitConsumer.condenseNewLines(content);
+        if (fragment.alias) {
+          // Add alias as suffix with dash to YAML anchors and aliases (e.g. &anchor -> &anchor-alias)
+          content = content.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${fragment.alias}`);
+        }
+
+        return `# fragment -> ${fragment.path}${fragment.alias ? ' as ' + fragment.alias : ''}\n` + GitConsumer.condenseNewLines(content);
       })));
 
       const composeStart = fileContents.search(/^services:\s*/m);

@@ -26,6 +26,7 @@ export class HoverProvider implements vscode.HoverProvider {
             if (content) {
                 if (alias) {
                     content = content.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                    content = content.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${alias}:`);
                 }
                 const markdown = new vscode.MarkdownString();
                 markdown.appendCodeblock(content, 'yaml');
@@ -78,6 +79,7 @@ export class HoverProvider implements vscode.HoverProvider {
             if (fragmentContent) {
                  if (alias) {
                     fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                    fragmentContent = fragmentContent.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${alias}:`);
                  }
                 // Look for anchor definition &anchorName
                 const anchorDefRegex = new RegExp(`(^|\\s)&${anchorName}\\b`);

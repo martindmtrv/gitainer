@@ -253,7 +253,7 @@ services:
 
   // Verify internal processing
   const stack = await gitainer.bareRepo.getStack("aliasstack");
-  expect(stack).toContain("x-labels: &labels-myalias");
+  expect(stack).toContain("x-labels-myalias: &labels-myalias");
   expect(stack).toContain(`custom.label: fragment-verified`);
   expect(stack).toContain("# === fragments start ===");
 
@@ -493,4 +493,63 @@ test("modify stack: remove service -> removed service container is cleaned up", 
 
   // Cleanup
   await $`docker rm -f cleanup-app-a`;
+}, { timeout: 100_000 });
+
+test("push stack importing same fragment twice with aliases, should deploy cleanly without alias key conflicts", async () => {
+  await cloneAndConfigRepo();
+  const fragRoot = TEST_ROOT + "/client/docker/fragments";
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/multi-alias";
+
+  mkdirSync(fragRoot, { recursive: true });
+  mkdirSync(stackRoot, { recursive: true });
+
+  const fragmentYaml = `x-plugsy-labels: &labels
+  custom.label.base: fragment-verified`;
+  await $`echo "${fragmentYaml}" > ${fragRoot}/plugsy.yaml`;
+
+  const stackCompose = `#! fragments/plugsy.yaml as a
+#! fragments/plugsy.yaml as b
+services:
+  app-a:
+    image: alpine
+    command: sleep infinity
+    container_name: multi-app-a
+    stop_grace_period: 0s
+    labels:
+      <<: *labels-a
+      custom.label.one: test1
+  app-b:
+    image: alpine
+    command: sleep infinity
+    container_name: multi-app-b
+    stop_grace_period: 0s
+    labels:
+      <<: *labels-b
+      custom.label.two: test2`;
+
+  await $`echo "${stackCompose}" > ${stackRoot}/docker-compose.yaml`;
+
+  const postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  await $`git add . && git commit -m "add multi alias stack" && git push`.cwd(TEST_ROOT + "/client/docker");
+
+  await postPromise;
+
+  const stack = await gitainer.bareRepo.getStack("multi-alias");
+  expect(stack).toContain("x-plugsy-labels-a: &labels-a");
+  expect(stack).toContain("x-plugsy-labels-b: &labels-b");
+
+  const labelsA = await $`docker inspect multi-app-a --format '{{json .Config.Labels}}'`.json();
+  expect(labelsA["custom.label.base"]).toBe("fragment-verified");
+
+  // Cleanup containers
+  await $`docker rm -f multi-app-a multi-app-b`;
 }, { timeout: 100_000 });

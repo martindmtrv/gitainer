@@ -25,6 +25,7 @@ export class CodeActionProvider implements vscode.CodeActionProvider {
             if (fragmentContent) {
                 if (alias) {
                     fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                    fragmentContent = fragmentContent.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${alias}:`);
                 }
                 const requiredAnchors = await this.getRequiredAnchors(fragmentContent);
                 const missingAnchors = requiredAnchors.filter(a => !this.isAnchorDefinedInDocument(document, a));

@@ -165,6 +165,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
             if (fragmentContent) {
                 if (alias) {
                     fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                    fragmentContent = fragmentContent.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${alias}:`);
                 }
                 const anchorDefRegex = /&([a-zA-Z0-9_-]+)/g;
                 let anchorMatch;

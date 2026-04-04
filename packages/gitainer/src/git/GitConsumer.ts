@@ -62,6 +62,7 @@ export class GitConsumer {
         if (fragment.alias) {
           // Add alias as suffix with dash to YAML anchors and aliases (e.g. &anchor -> &anchor-alias)
           content = content.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${fragment.alias}`);
+          content = content.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${fragment.alias}:`);
         }
 
         return `# fragment -> ${fragment.path}${fragment.alias ? ' as ' + fragment.alias : ''}\n` + GitConsumer.condenseNewLines(content);

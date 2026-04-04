@@ -26,6 +26,7 @@ export class HydrationProvider {
                 let fragmentContent = fs.readFileSync(fullPath, 'utf8');
                 if (alias) {
                     fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                    fragmentContent = fragmentContent.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${alias}:`);
                 }
                 fragments.push(`# fragment -> ${fragmentPath}${alias ? ' as ' + alias : ''}\n${fragmentContent}`);
             } else {

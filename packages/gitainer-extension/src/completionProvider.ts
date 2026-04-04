@@ -50,8 +50,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         const files = await vscode.workspace.findFiles('**/*.{yaml,yml}');
         const items: vscode.CompletionItem[] = [];
 
-        // Calculate the range to replace: only the path part
         const lineText = document.lineAt(position.line).text;
+        const lineTextUpToCursor = lineText.substring(0, position.character);
+        
+        const asMatch = /#!\s*(.*?)\s+as\s+([a-zA-Z0-9_-]*)$/.exec(lineTextUpToCursor);
+        if (asMatch) {
+            const fragmentPath = asMatch[1].trim();
+            const currentTypedAlias = asMatch[2];
+            return this.provideAliasCompletions(document, position, fragmentPath, currentTypedAlias);
+        }
         const match = HydrationProvider.IMPORT_REGEX.exec(lineText);
         HydrationProvider.IMPORT_REGEX.lastIndex = 0;
 
@@ -93,30 +100,9 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
                 const requiredAnchors = await this.getRequiredAnchors(fragmentContent);
                 if (requiredAnchors.length > 0) {
                     item.detail = `Requires: ${requiredAnchors.join(', ')}`;
-
-                    let insertLine = 0;
-                    let indent = '';
-                    let prefixText = '';
-                    for (let i = 0; i < document.lineCount; i++) {
-                        const lText = document.lineAt(i).text;
-                        if (/^[a-zA-Z0-9_-]+:/.test(lText)) {
-                            insertLine = i + 1;
-                            indent = this.getIndentString(document);
-                            break;
-                        }
-                    }
-                    if (!indent) {
-                        prefixText = 'x-anchors:\n';
-                        indent = this.getIndentString(document);
-                    }
-
-                    // Add additionalTextEdits to autofill anchors inside the top-level group
-                    const insertText = prefixText + requiredAnchors.map(a => `${indent}x-${a}${alias ? '-' + alias : ''}: &${a}${alias ? '-' + alias : ''}\n`).join('');
-                    const edit = new vscode.TextEdit(
-                        new vscode.Range(insertLine, 0, insertLine, 0),
-                        insertText
-                    );
-                    item.additionalTextEdits = [edit];
+                    // Removed automatic additionalTextEdits insertion here.
+                    // Instead, rely on the CodeAction Quick Fix to append required variables
+                    // once the user has finished typing their import and possible alias.
                 }
             }
 
@@ -124,6 +110,145 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         }
 
         return items;
+    }
+
+    private async provideAliasCompletions(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        fragmentPath: string,
+        currentTypedAlias: string
+    ): Promise<vscode.CompletionItem[]> {
+        const services = this.getServicesFromDocument(document);
+        if (services.length === 0) return [];
+
+        const items: vscode.CompletionItem[] = [];
+        const startIndex = position.character - currentTypedAlias.length;
+        const range = new vscode.Range(position.line, startIndex, position.line, position.character);
+
+        let baseFragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
+
+        for (const service of services) {
+            const item = new vscode.CompletionItem(service, vscode.CompletionItemKind.Value);
+            item.range = range;
+
+            if (baseFragmentContent) {
+                let fragmentContent = baseFragmentContent;
+                fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${service}`);
+                fragmentContent = fragmentContent.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${service}:`);
+                
+                const requiredAnchors = await this.getRequiredAnchors(fragmentContent);
+                const missingAnchors = requiredAnchors.filter(a => !this.isAnchorDefinedInDocument(document, a));
+
+                if (missingAnchors.length > 0) {
+                    item.detail = `Requires: ${missingAnchors.join(', ')}`;
+                    const commentText = `alias ${service}`;
+                    const commentSearchRegex = new RegExp(`^\\s*#\\s*${commentText}\\s*$`);
+                    
+                    let foundCommentLine = -1;
+                    for (let i = 0; i < document.lineCount; i++) {
+                        if (commentSearchRegex.test(document.lineAt(i).text)) {
+                            foundCommentLine = i;
+                            break;
+                        }
+                    }
+
+                    if (foundCommentLine !== -1) {
+                        const match = /^(\s*)/.exec(document.lineAt(foundCommentLine).text);
+                        const currentIndent = match ? match[1] : this.getIndentString(document);
+                        const insertText = missingAnchors.map(a => `${currentIndent}x-${a}: &${a}\n`).join('');
+                        const edit = new vscode.TextEdit(
+                            new vscode.Range(foundCommentLine + 1, 0, foundCommentLine + 1, 0),
+                            insertText
+                        );
+                        item.additionalTextEdits = [edit];
+                    } else {
+                        let insertLine = -1;
+                        let indent = '';
+                        let prefixText = '';
+                        for (let i = 0; i < document.lineCount; i++) {
+                            if (/^x-[a-zA-Z0-9_-]+:/.test(document.lineAt(i).text)) {
+                                insertLine = i + 1;
+                                indent = this.getIndentString(document);
+                                break;
+                            }
+                        }
+                        if (insertLine === -1) {
+                            let firstImportLine = -1;
+                            for (let i = 0; i < document.lineCount; i++) {
+                                if (document.lineAt(i).text.startsWith('#!')) {
+                                    firstImportLine = i;
+                                    break;
+                                }
+                            }
+                            insertLine = firstImportLine !== -1 ? firstImportLine : 0;
+                            prefixText = 'x-vars:\n';
+                            indent = this.getIndentString(document);
+                        }
+
+                        const comment = `${indent}# ${commentText}\n`;
+                        const insertText = prefixText + comment + missingAnchors.map(a => `${indent}x-${a}: &${a}\n`).join('');
+                        const edit = new vscode.TextEdit(
+                            new vscode.Range(insertLine, 0, insertLine, 0),
+                            insertText
+                        );
+                        item.additionalTextEdits = [edit];
+                    }
+                }
+            }
+
+            items.push(item);
+        }
+
+        return items;
+    }
+
+    private getServicesFromDocument(document: vscode.TextDocument): string[] {
+        const services: string[] = [];
+        let inServices = false;
+        let servicesIndent = -1;
+
+        for (let i = 0; i < document.lineCount; i++) {
+            const line = document.lineAt(i).text;
+            if (line.trim().startsWith('#')) continue;
+
+            if (/^services:\s*$/.test(line)) {
+                inServices = true;
+                continue;
+            }
+
+            if (inServices) {
+                const match = /^(\s+)([a-zA-Z0-9_-]+):/.exec(line);
+                if (match) {
+                    const indent = match[1].length;
+                    if (servicesIndent === -1) {
+                        servicesIndent = indent;
+                        services.push(match[2]);
+                    } else if (indent === servicesIndent) {
+                        services.push(match[2]);
+                    } else if (indent < servicesIndent) {
+                        if (/^[a-zA-Z0-9_-]+:/.test(line)) inServices = false;
+                    }
+                } else if (/^[a-zA-Z0-9_-]+:/.test(line)) {
+                    inServices = false;
+                }
+            }
+        }
+        return services;
+    }
+
+    private isAnchorDefinedInDocument(document: vscode.TextDocument, anchorName: string): boolean {
+        const text = document.getText();
+        const defRegex = new RegExp(`&${anchorName}\\b`);
+        return defRegex.test(text);
+    }
+
+    private getIndentString(document: vscode.TextDocument): string {
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === document.uri.toString());
+        if (editor && editor.options.insertSpaces !== undefined) {
+            return editor.options.insertSpaces ? ' '.repeat(editor.options.tabSize as number || 2) : '\t';
+        }
+        const config = vscode.workspace.getConfiguration('editor', document.uri);
+        return config.get<boolean>('insertSpaces', true) ? ' '.repeat(config.get<number>('tabSize', 2)) : '\t';
     }
 
     private async getRequiredAnchors(fragmentContent: string): Promise<string[]> {
@@ -144,14 +269,6 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         return Array.from(usedAnchors).filter(a => !definedAnchors.has(a));
     }
 
-    private getIndentString(document: vscode.TextDocument): string {
-        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === document.uri.toString());
-        if (editor && editor.options.insertSpaces !== undefined) {
-            return editor.options.insertSpaces ? ' '.repeat(editor.options.tabSize as number || 2) : '\t';
-        }
-        const config = vscode.workspace.getConfiguration('editor', document.uri);
-        return config.get<boolean>('insertSpaces', true) ? ' '.repeat(config.get<number>('tabSize', 2)) : '\t';
-    }
 
     private async getAnchorsFromFragments(document: vscode.TextDocument): Promise<{ name: string, fragmentPath: string, content: string }[]> {
         const content = document.getText();

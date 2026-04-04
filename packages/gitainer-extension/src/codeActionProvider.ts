@@ -30,10 +30,25 @@ export class CodeActionProvider implements vscode.CodeActionProvider {
                 const missingAnchors = requiredAnchors.filter(a => !this.isAnchorDefinedInDocument(document, a));
 
                 if (missingAnchors.length > 0) {
+                    let insertLine = 0;
+                    let indent = '';
+                    let prefixText = '';
+                    for (let i = 0; i < document.lineCount; i++) {
+                        if (/^[a-zA-Z0-9_-]+:/.test(document.lineAt(i).text)) {
+                            insertLine = i + 1;
+                            indent = this.getIndentString(document);
+                            break;
+                        }
+                    }
+                    if (!indent) {
+                        prefixText = 'x-anchors:\n';
+                        indent = this.getIndentString(document);
+                    }
+
                     const fix = new vscode.CodeAction(`Gitainer: Autofill missing anchors`, vscode.CodeActionKind.QuickFix);
                     fix.edit = new vscode.WorkspaceEdit();
-                    const insertText = missingAnchors.map(a => `x-${a}: &${a}\n  \n`).join('');
-                    fix.edit.insert(document.uri, new vscode.Position(range.start.line, 0), insertText);
+                    const insertText = prefixText + missingAnchors.map(a => `${indent}x-${a}: &${a}\n`).join('');
+                    fix.edit.insert(document.uri, new vscode.Position(insertLine, 0), insertText);
                     return [fix];
                 }
             }
@@ -58,6 +73,15 @@ export class CodeActionProvider implements vscode.CodeActionProvider {
         }
 
         return Array.from(usedAnchors).filter(a => !definedAnchors.has(a));
+    }
+
+    private getIndentString(document: vscode.TextDocument): string {
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === document.uri.toString());
+        if (editor && editor.options.insertSpaces !== undefined) {
+            return editor.options.insertSpaces ? ' '.repeat(editor.options.tabSize as number || 2) : '\t';
+        }
+        const config = vscode.workspace.getConfiguration('editor', document.uri);
+        return config.get<boolean>('insertSpaces', true) ? ' '.repeat(config.get<number>('tabSize', 2)) : '\t';
     }
 
     private isAnchorDefinedInDocument(document: vscode.TextDocument, anchorName: string): boolean {

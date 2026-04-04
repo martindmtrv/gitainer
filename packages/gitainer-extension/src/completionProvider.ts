@@ -94,10 +94,27 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
                 if (requiredAnchors.length > 0) {
                     item.detail = `Requires: ${requiredAnchors.join(', ')}`;
 
-                    // Add additionalTextEdits to autofill anchors above the import line
+                    let insertLine = 0;
+                    let indent = '';
+                    let prefixText = '';
+                    for (let i = 0; i < document.lineCount; i++) {
+                        const lText = document.lineAt(i).text;
+                        if (/^[a-zA-Z0-9_-]+:/.test(lText)) {
+                            insertLine = i + 1;
+                            indent = this.getIndentString(document);
+                            break;
+                        }
+                    }
+                    if (!indent) {
+                        prefixText = 'x-anchors:\n';
+                        indent = this.getIndentString(document);
+                    }
+
+                    // Add additionalTextEdits to autofill anchors inside the top-level group
+                    const insertText = prefixText + requiredAnchors.map(a => `${indent}x-${a}${alias ? '-' + alias : ''}: &${a}${alias ? '-' + alias : ''}\n`).join('');
                     const edit = new vscode.TextEdit(
-                        new vscode.Range(position.line, 0, position.line, 0),
-                        requiredAnchors.map(a => `x-${a}${alias ? '-' + alias : ''}: &${a}${alias ? '-' + alias : ''}\n  \n`).join('')
+                        new vscode.Range(insertLine, 0, insertLine, 0),
+                        insertText
                     );
                     item.additionalTextEdits = [edit];
                 }
@@ -125,6 +142,15 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         }
 
         return Array.from(usedAnchors).filter(a => !definedAnchors.has(a));
+    }
+
+    private getIndentString(document: vscode.TextDocument): string {
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === document.uri.toString());
+        if (editor && editor.options.insertSpaces !== undefined) {
+            return editor.options.insertSpaces ? ' '.repeat(editor.options.tabSize as number || 2) : '\t';
+        }
+        const config = vscode.workspace.getConfiguration('editor', document.uri);
+        return config.get<boolean>('insertSpaces', true) ? ' '.repeat(config.get<number>('tabSize', 2)) : '\t';
     }
 
     private async getAnchorsFromFragments(document: vscode.TextDocument): Promise<{ name: string, fragmentPath: string, content: string }[]> {

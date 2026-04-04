@@ -15,13 +15,17 @@ export class CodeActionProvider implements vscode.CodeActionProvider {
         _token: vscode.CancellationToken
     ): Promise<vscode.CodeAction[]> {
         const line = document.lineAt(range.start.line);
-        const importRegex = /^\s*#!\s*(.*?)\s*$/;
-        const match = importRegex.exec(line.text);
+        const match = HydrationProvider.IMPORT_REGEX.exec(line.text);
+        HydrationProvider.IMPORT_REGEX.lastIndex = 0;
 
         if (match) {
             const fragmentPath = match[1].trim();
-            const fragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
+            const alias = match[2];
+            let fragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
             if (fragmentContent) {
+                if (alias) {
+                    fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                }
                 const requiredAnchors = await this.getRequiredAnchors(fragmentContent);
                 const missingAnchors = requiredAnchors.filter(a => !this.isAnchorDefinedInDocument(document, a));
 

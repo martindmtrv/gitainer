@@ -50,13 +50,29 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         const files = await vscode.workspace.findFiles('**/*.{yaml,yml}');
         const items: vscode.CompletionItem[] = [];
 
-        // Calculate the range to replace: everything after '#!'
+        // Calculate the range to replace: only the path part
         const lineText = document.lineAt(position.line).text;
+        const match = HydrationProvider.IMPORT_REGEX.exec(lineText);
+        HydrationProvider.IMPORT_REGEX.lastIndex = 0;
+
+        let alias = '';
+        let pathEndIndex = lineText.length;
+        if (match) {
+            alias = match[2] || '';
+            // If alias exists, the path ends before ' as <alias>'
+            if (alias) {
+                const asIndex = lineText.lastIndexOf(' as ');
+                if (asIndex !== -1) {
+                    pathEndIndex = asIndex;
+                }
+            }
+        }
+
         const range = new vscode.Range(
             position.line,
             hashBangIndex + 2,
             position.line,
-            lineText.length
+            pathEndIndex
         );
 
         for (const file of files) {
@@ -81,7 +97,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
                     // Add additionalTextEdits to autofill anchors above the import line
                     const edit = new vscode.TextEdit(
                         new vscode.Range(position.line, 0, position.line, 0),
-                        requiredAnchors.map(a => `x-${a}: &${a}\n  \n`).join('')
+                        requiredAnchors.map(a => `x-${a}${alias ? '-' + alias : ''}: &${a}${alias ? '-' + alias : ''}\n  \n`).join('')
                     );
                     item.additionalTextEdits = [edit];
                 }
@@ -113,18 +129,23 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
 
     private async getAnchorsFromFragments(document: vscode.TextDocument): Promise<{ name: string, fragmentPath: string, content: string }[]> {
         const content = document.getText();
-        const fragmentImports = Array.from(content.matchAll(HydrationProvider.IMPORT_REGEX)).map(m => m[1].trim());
+        const matches = Array.from(content.matchAll(HydrationProvider.IMPORT_REGEX));
         const results: { name: string, fragmentPath: string, content: string }[] = [];
 
-        for (const fragmentPath of fragmentImports) {
-            const fragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
+        for (const match of matches) {
+            const fragmentPath = match[1].trim();
+            const alias = match[2];
+            let fragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
             if (fragmentContent) {
+                if (alias) {
+                    fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                }
                 const anchorDefRegex = /&([a-zA-Z0-9_-]+)/g;
-                let match;
-                while ((match = anchorDefRegex.exec(fragmentContent)) !== null) {
+                let anchorMatch;
+                while ((anchorMatch = anchorDefRegex.exec(fragmentContent)) !== null) {
                     results.push({
-                        name: match[1],
-                        fragmentPath: fragmentPath,
+                        name: anchorMatch[1],
+                        fragmentPath: `${fragmentPath}${alias ? ' as ' + alias : ''}`,
                         content: fragmentContent
                     });
                 }

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 export class HydrationProvider {
-    static readonly IMPORT_REGEX = /^#!\s*(.*?)\s*$/mg;
+    static readonly IMPORT_REGEX = /^#!\s*(.*?)(?:\s+as\s+([a-zA-Z0-9_-]+))?\s*$/mg;
 
     async getHydratedContent(document: vscode.TextDocument): Promise<string> {
         let content = document.getText();
@@ -17,15 +17,19 @@ export class HydrationProvider {
 
         for (const match of matches) {
             const fragmentPath = match[1];
+            const alias = match[2];
             const fullPath = path.isAbsolute(fragmentPath)
                 ? fragmentPath
                 : path.join(folder.uri.fsPath, fragmentPath);
 
             if (fs.existsSync(fullPath)) {
-                const fragmentContent = fs.readFileSync(fullPath, 'utf8');
-                fragments.push(`# fragment -> ${fragmentPath}\n${fragmentContent}`);
+                let fragmentContent = fs.readFileSync(fullPath, 'utf8');
+                if (alias) {
+                    fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                }
+                fragments.push(`# fragment -> ${fragmentPath}${alias ? ' as ' + alias : ''}\n${fragmentContent}`);
             } else {
-                fragments.push(`# fragment -> ${fragmentPath} (NOT FOUND)`);
+                fragments.push(`# fragment -> ${fragmentPath}${alias ? ' as ' + alias : ''} (NOT FOUND)`);
             }
         }
 

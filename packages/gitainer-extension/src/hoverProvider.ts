@@ -16,12 +16,17 @@ export class HoverProvider implements vscode.HoverProvider {
         const line = document.lineAt(position.line);
 
         // 1. Check for #! fragment import hover
-        const fragmentImportRegex = /^\s*#!\s*(.*?)\s*$/;
-        const fragmentMatch = fragmentImportRegex.exec(line.text);
+        const fragmentMatch = HydrationProvider.IMPORT_REGEX.exec(line.text);
+        // Reset lastIndex because IMPORT_REGEX has the 'g' flag
+        HydrationProvider.IMPORT_REGEX.lastIndex = 0;
         if (fragmentMatch) {
             const fragmentPath = fragmentMatch[1].trim();
-            const content = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
+            const alias = fragmentMatch[2];
+            let content = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
             if (content) {
+                if (alias) {
+                    content = content.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                }
                 const markdown = new vscode.MarkdownString();
                 markdown.appendCodeblock(content, 'yaml');
                 return new vscode.Hover(markdown);
@@ -64,16 +69,21 @@ export class HoverProvider implements vscode.HoverProvider {
 
     private async provideAnchorHover(document: vscode.TextDocument, anchorName: string): Promise<vscode.Hover | undefined> {
         const content = document.getText();
-        const fragmentImports = Array.from(content.matchAll(HydrationProvider.IMPORT_REGEX)).map(m => m[1].trim());
+        const matches = Array.from(content.matchAll(HydrationProvider.IMPORT_REGEX));
 
-        for (const fragmentPath of fragmentImports) {
-            const fragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
+        for (const match of matches) {
+            const fragmentPath = match[1].trim();
+            const alias = match[2];
+            let fragmentContent = await this.hydrationProvider.getFragmentContent(fragmentPath, document);
             if (fragmentContent) {
+                 if (alias) {
+                    fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
+                 }
                 // Look for anchor definition &anchorName
-                const anchorDefRegex = new RegExp(`&${anchorName}\\b`);
+                const anchorDefRegex = new RegExp(`(^|\\s)&${anchorName}\\b`);
                 if (anchorDefRegex.test(fragmentContent)) {
                     const markdown = new vscode.MarkdownString();
-                    markdown.appendMarkdown(`**Source Fragment:** \`${fragmentPath}\`\n\n`);
+                    markdown.appendMarkdown(`**Source Fragment:** \`${fragmentPath}${alias ? ' as ' + alias : ''}\`\n\n`);
                     markdown.appendCodeblock(fragmentContent, 'yaml');
                     return new vscode.Hover(markdown);
                 }

@@ -37,7 +37,7 @@ Preview Gitainer stack hydration and environment variables directly in VS Code.
 ### Advanced Features
 
 - **Variable Hovers**: Hover over `$VAR` to see resolved values.
-- **Anchor Hovers/Completion**: Hover over `*anchor` to see its source fragment, and get completions for anchors defined in fragments.
+- **Anchor Hovers/Completion**: Hover over `*anchor` to see its source fragment, and get completions for anchors defined in fragments. Automatically resolves dynamic `-<alias>` suffixes if you import fragments using `#! path/to as alias`!
 - **Anchor Autofill**: Automatically insert required anchor templates when importing fragments.
 
 ## Publishing

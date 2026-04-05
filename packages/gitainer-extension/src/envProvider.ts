@@ -1,15 +1,16 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 
 export class EnvProvider {
     async getEnvMap(document: vscode.TextDocument): Promise<Record<string, string>> {
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
         if (folder) {
-            const envPath = path.join(folder.uri.fsPath, '.env');
-            if (fs.existsSync(envPath)) {
-                const envContent = fs.readFileSync(envPath, 'utf8');
+            const envUri = vscode.Uri.joinPath(folder.uri, '.env');
+            try {
+                const uint8Array = await vscode.workspace.fs.readFile(envUri);
+                const envContent = new TextDecoder().decode(uint8Array);
                 return this.parseEnv(envContent);
+            } catch (e) {
+                // Return empty if file not found
             }
         }
         return {};

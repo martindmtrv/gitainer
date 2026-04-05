@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { HydrationProvider } from './hydrationProvider';
 
 export class CompletionProvider implements vscode.CompletionItemProvider {
@@ -83,7 +82,7 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
         );
 
         for (const file of files) {
-            let relativePath = path.relative(folder.uri.fsPath, file.fsPath);
+            let relativePath = vscode.workspace.asRelativePath(file, false);
 
             // Skip the current file
             if (file.fsPath === document.uri.fsPath) {

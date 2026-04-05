@@ -1,6 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs';
 
 export class HydrationProvider {
     static readonly IMPORT_REGEX = /^#!\s*(.*?)(?:\s+as\s+([a-zA-Z0-9_-]+))?\s*$/mg;
@@ -18,18 +16,19 @@ export class HydrationProvider {
         for (const match of matches) {
             const fragmentPath = match[1];
             const alias = match[2];
-            const fullPath = path.isAbsolute(fragmentPath)
-                ? fragmentPath
-                : path.join(folder.uri.fsPath, fragmentPath);
+            const fragmentUri = fragmentPath.startsWith('/')  
+                ? vscode.Uri.file(fragmentPath) 
+                : vscode.Uri.joinPath(folder.uri, fragmentPath);
 
-            if (fs.existsSync(fullPath)) {
-                let fragmentContent = fs.readFileSync(fullPath, 'utf8');
+            try {
+                const uint8Array = await vscode.workspace.fs.readFile(fragmentUri);
+                let fragmentContent = new TextDecoder().decode(uint8Array);
                 if (alias) {
                     fragmentContent = fragmentContent.replace(/(^|\s)([&*])([a-zA-Z0-9_-]+)/g, `$1$2$3-${alias}`);
                     fragmentContent = fragmentContent.replace(/^(x-[a-zA-Z0-9_-]*):/gm, `$1-${alias}:`);
                 }
                 fragments.push(`# fragment -> ${fragmentPath}${alias ? ' as ' + alias : ''}\n${fragmentContent}`);
-            } else {
+            } catch (e) {
                 fragments.push(`# fragment -> ${fragmentPath}${alias ? ' as ' + alias : ''} (NOT FOUND)`);
             }
         }
@@ -57,13 +56,15 @@ export class HydrationProvider {
             return undefined;
         }
 
-        const fullPath = path.isAbsolute(fragmentPath)
-            ? fragmentPath
-            : path.join(folder.uri.fsPath, fragmentPath);
+        const fragmentUri = fragmentPath.startsWith('/') 
+            ? vscode.Uri.file(fragmentPath) 
+            : vscode.Uri.joinPath(folder.uri, fragmentPath);
 
-        if (fs.existsSync(fullPath)) {
-            return fs.readFileSync(fullPath, 'utf8');
+        try {
+            const uint8Array = await vscode.workspace.fs.readFile(fragmentUri);
+            return new TextDecoder().decode(uint8Array);
+        } catch (e) {
+            return undefined;
         }
-        return undefined;
     }
 }

@@ -130,21 +130,6 @@ export class GitainerServer {
 
     await setMainPromise;
 
-    // Create post-receive hook to trigger synthesis and pipe output back to client
-    const hookPath = `${repoDir}/hooks/post-receive`;
-    const hookContent = `#!/bin/bash
-# Gitainer post-receive hook
-while read oldrev newrev refname
-do
-  if [ "$refname" = "refs/heads/${this.gitBranch}" ]; then
-    echo "remote: Gitainer: Starting synthesis..."
-    curl -s -X POST "http://localhost:3000/internal/synthesize?commit=$newrev"
-  fi
-done
-`;
-    await $`echo ${hookContent} > ${hookPath}`;
-    await $`chmod +x ${hookPath}`;
-
     return this.bareRepo;
   }
 
@@ -273,21 +258,22 @@ done
       log(res.msg);
       await $`env > ${this.gitainerDataPath}/lastSynthesizedEnv`;
     } catch (e) {
-      log((e as Error).hasOwnProperty('message') ? (e as Error).message : String(e));
+      const errMsg = (e as Error).hasOwnProperty('message') ? (e as Error).message : String(e);
+      log(errMsg);
       wasSuccessful = false;
       res = {
-        output: (e as ShellError)?.stderr?.toString() || (e as Error).message,
+        output: (e as ShellError)?.stderr?.toString() || errMsg,
         failedStackContent: hydratedCompose,
       };
       if (!shouldRevertOnFail) {
         res = {
           ...res,
-          err: "Got an error during synthesis",
+          err: `Got an error during synthesis: ${res.output}`,
         };
       } else {
         res = {
           ...res,
-          err: "Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back",
+          err: `Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back. Error: ${res.output}`,
           suceededStacks: combinedStackChanges.length === 0 || currentStack === combinedStackChanges[0].file ? [] :
             combinedStackChanges
               .slice(
@@ -352,6 +338,21 @@ done
   }
 
   async listen(port: number) {
+    const repoDir = this.bareDir + `/${this.repoName}.git`;
+    const hookPath = `${repoDir}/hooks/post-receive`;
+    const hookContent = `#!/bin/bash
+# Gitainer post-receive hook
+while read oldrev newrev refname
+do
+  if [ "$refname" = "refs/heads/${this.gitBranch}" ]; then
+    echo "remote: Gitainer: Starting synthesis..."
+    curl -s -X POST "http://localhost:${port}/internal/synthesize?commit=$newrev"
+  fi
+done
+`;
+    await $`echo ${hookContent} > ${hookPath}`;
+    await $`chmod +x ${hookPath}`;
+
     const originalHandle = this.repos.handle.bind(this.repos);
     this.repos.handle = (req: any, res: any) => {
       if (req.method === 'POST' && req.url.includes('/internal/synthesize')) {

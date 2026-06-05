@@ -4,7 +4,7 @@ LABEL org.opencontainers.image.source=https://github.com/martindmtrv/gitainer
 LABEL org.opencontainers.image.description="Simple Git-based container management platform for Docker Standalone"
 
 # setup go 
-RUN apk add --no-cache git make musl-dev go curl
+RUN apk add --no-cache git make musl-dev go curl openssh-client
 
 # Configure Go
 ENV GOROOT=/usr/lib/go

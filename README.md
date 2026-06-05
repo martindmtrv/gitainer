@@ -110,6 +110,49 @@ To set this up, provide the following environment variables in your Gitainer dep
     INFISICAL_PROJECT_ENVIRONMENT=<infisical project environment>
 ```
 
+### Remote Docker Host
+
+Gitainer allows deploying a specific stack to a remote Docker host. To configure this, add a special comment prefix `#@` exactly at the very first line of your stack's `docker-compose.yaml`:
+
+```yaml
+#@ root@192.168.1.100:/opt/stack
+services:
+  app:
+    image: alpine
+    ...
+```
+
+The syntax for the remote host is:
+```yaml
+#@ [scheme://]user@host[:port][:path]
+```
+- **DOCKER_HOST**: If the scheme is omitted, it defaults to `ssh://` (e.g. `ssh://root@192.168.1.100`). Other schemes like `tcp://` are also supported.
+- **COMPOSE_PROJECT_DIR**: If a path suffix is provided at the end (separated by a colon, e.g. `:/opt/stack` or `:opt/stack`), it will set the `COMPOSE_PROJECT_DIR` environment variable for the deployment (optional).
+
+> [!WARNING]
+> This directive is strictly validated and is **only allowed once per stack, exactly at the first line**. Pushing it elsewhere in the file will reject the push and return a validation error.
+
+#### Exposing SSH Keys to Gitainer
+Since Gitainer runs inside a Docker container, you must expose your host's SSH credentials to the container for remote SSH deployments:
+
+##### Option A: Mount host's SSH directory (Simple)
+Mount your local `.ssh` directory into the container's home directory (read-only) in your Gitainer deployment:
+```yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.ssh:/root/.ssh:ro
+```
+
+##### Option B: Mount the SSH Agent Socket (Recommended & Secure)
+If you run `ssh-agent` on the host, mount the SSH agent socket and pass the environment variable:
+```yaml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SSH_AUTH_SOCK}:/ssh-agent
+    environment:
+      - SSH_AUTH_SOCK=/ssh-agent
+```
+
 ## Fragments
 
 Docker compose also natively supports [fragments](https://docs.docker.com/reference/compose-file/fragments/). The limitation with fragments in regular Docker Compose is they require the anchor to be resolved within the same file, because [YAML documents are independant](https://github.com/docker/compose/issues/5621#issuecomment-499021562). Ultimately this means that they cannot be reused across multiple files when using built in options such as [merge](https://docs.docker.com/reference/compose-file/merge/) or [include](https://docs.docker.com/reference/compose-file/include/).

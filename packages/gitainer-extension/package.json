@@ -2,7 +2,7 @@
     "name": "gitainer-extension",
     "displayName": "Gitainer",
     "description": "Preview Gitainer stack hydration and environment variables",
-    "version": "0.0.5",
+    "version": "0.0.6",
     "publisher": "gitainer",
     "license": "MIT",
     "repository": {

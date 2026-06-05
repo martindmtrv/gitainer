@@ -33,6 +33,26 @@ export class CompletionProvider implements vscode.CompletionItemProvider {
             }
         }
 
+        // 3. Check if the user is typing a remote host comment (starts with '#@' or '#' on line 0)
+        if (position.line === 0 && (line.text.startsWith('#@') || line.text.startsWith('#'))) {
+            const item = new vscode.CompletionItem('#@ remote-host-config', vscode.CompletionItemKind.Snippet);
+            item.detail = 'Gitainer Remote Docker Host Config';
+            item.insertText = new vscode.SnippetString('@ ${1:root}@${2:192.168.1.100}:${3:/opt/stack}');
+            item.documentation = new vscode.MarkdownString(
+                'Configures Gitainer to deploy this stack to a remote Docker daemon.\n\n' +
+                'Format: `#@ [scheme://]user@host[:port][:path]`\n\n' +
+                'Example: `#@ root@192.168.1.100:/opt/stack`'
+            );
+            
+            // Adjust range depending on what the user has already typed
+            if (line.text.startsWith('#@')) {
+                item.range = new vscode.Range(0, 2, 0, position.character);
+            } else {
+                item.range = new vscode.Range(0, 1, 0, position.character);
+            }
+            return [item];
+        }
+
         return [];
     }
 

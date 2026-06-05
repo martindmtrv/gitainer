@@ -15,6 +15,45 @@ export class HoverProvider implements vscode.HoverProvider {
     ): Promise<vscode.Hover | undefined> {
         const line = document.lineAt(position.line);
 
+        // 0. Check for remote host comment hover
+        if (position.line === 0 && line.text.trim().startsWith("#@")) {
+            const markdown = new vscode.MarkdownString();
+            markdown.appendMarkdown(`**Gitainer Remote Docker Host Config**\n\n`);
+            markdown.appendMarkdown(`Deploys this stack to a remote Docker daemon.\n\n`);
+            markdown.appendMarkdown(`**Format:** \`#@ [scheme://]user@host[:port][:path]\`\n\n`);
+            
+            const match = line.text.trim().match(/^#@\s*(.+)$/);
+            if (match) {
+                const fullValue = match[1].trim();
+                let temp = fullValue;
+                let scheme = "ssh://";
+                const schemeMatch = temp.match(/^([a-zA-Z0-9.+-]+:\/\/)/);
+                if (schemeMatch) {
+                    scheme = schemeMatch[1];
+                    temp = temp.substring(scheme.length);
+                }
+
+                let hostPart = temp;
+                let pathPart = "";
+                const lastColonIndex = temp.lastIndexOf(":");
+                if (lastColonIndex !== -1) {
+                    const afterColon = temp.substring(lastColonIndex + 1).trim();
+                    const isNumeric = /^\d+$/.test(afterColon);
+                    if (!isNumeric) {
+                        hostPart = temp.substring(0, lastColonIndex).trim();
+                        pathPart = afterColon;
+                    }
+                }
+                
+                markdown.appendMarkdown(`**Current Configuration:**\n`);
+                markdown.appendMarkdown(`- **DOCKER_HOST:** \`${scheme}${hostPart}\`\n`);
+                if (pathPart) {
+                    markdown.appendMarkdown(`- **COMPOSE_PROJECT_DIR:** \`${pathPart}\`\n`);
+                }
+            }
+            return new vscode.Hover(markdown);
+        }
+
         // 1. Check for #! fragment import hover
         const fragmentMatch = HydrationProvider.IMPORT_REGEX.exec(line.text);
         // Reset lastIndex because IMPORT_REGEX has the 'g' flag

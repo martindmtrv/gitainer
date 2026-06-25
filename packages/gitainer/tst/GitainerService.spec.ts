@@ -553,3 +553,48 @@ services:
   // Cleanup containers
   await $`docker rm -f multi-app-a multi-app-b`;
 }, { timeout: 100_000 });
+
+test("push stack using prefix_entrypoint, should compile entrypoint wrapper and run successfully", async () => {
+  await cloneAndConfigRepo();
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/prefixstack";
+
+  mkdirSync(stackRoot, { recursive: true });
+
+  const compose = `services:
+  prefix-app:
+    image: alpine
+    prefix_entrypoint:
+      - echo "hello from prefix"
+      - touch /tmp/prefix_created
+    command: sleep infinity
+    container_name: prefix-app-test
+    stop_grace_period: 0s`;
+
+  await $`echo "${compose}" > ${stackRoot}/docker-compose.yaml`;
+
+  const postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  await $`git add . && git commit -m "add prefix stack" && git push`.cwd(TEST_ROOT + "/client/docker");
+
+  await postPromise;
+
+  // Verify prefix commands were executed by checking inside the container
+  const fileExists = await $`docker exec prefix-app-test ls /tmp/prefix_created`.text();
+  expect(fileExists).toContain("prefix_created");
+
+  // Verify that the command (sleep infinity) is still running by checking logs
+  const logs = await $`docker logs prefix-app-test`.text();
+  expect(logs).toContain("hello from prefix");
+
+  // Cleanup container
+  await $`docker rm -f prefix-app-test`;
+}, { timeout: 100_000 });
+

@@ -6,6 +6,7 @@ Simple Git-based container management platform for Docker Standalone
 
 - All the benefits of Git such as versioning, portability, etc.
 - Pass through Variables and YAML fragments to keep your stacks DRY
+- Prepend setup commands to containers via `prefix_entrypoint` without overriding original execution
 - Lightweight HTTP API to trigger stack actions from CI/CD pipelines
 - POST webhook option for update responses
 
@@ -281,6 +282,24 @@ services:
     <<: *postgres-replica
     container_name: replica-db
 ```
+
+### Prefix Entrypoint
+
+Gitainer provides a custom property `prefix_entrypoint` to easily prepend setup commands (like symlinking, pulling dependencies, or calling webhooks) before your container's original `ENTRYPOINT` and `CMD` execute, without losing the image's downstream default execution sequence.
+
+This is highly useful because standard Docker Compose requires you to duplicate and hardcode the image's original entrypoint and command if you override the entrypoint to run a custom script. With `prefix_entrypoint`, you can leave the command and entrypoint unspecified, and Gitainer will resolve them dynamically.
+
+#### Example:
+In your stack's `docker-compose.yaml`:
+```yaml
+services:
+  web:
+    image: nginx:alpine
+    prefix_entrypoint:
+      - curl -X POST https://api.webhooks.com/container-started
+```
+
+Under the hood, Gitainer automatically pulls the image, inspects its embedded metadata (Entrypoint and Cmd), and generates a `/bin/sh -c` wrapper script using `exec "$@"` to pass the image's native execution arguments safely.
 
 ## Motivation
 

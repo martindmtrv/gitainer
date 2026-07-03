@@ -12,7 +12,7 @@ jobs:
         name: Check out code
 
       - name: Build Test Image
-        run: docker build -f packages/gitainer/Dockerfile.test -t gitainer-test .
+        run: docker build --target test -f packages/gitainer/Dockerfile -t gitainer-test .
 
       - name: Run Tests
         run: docker run --privileged --rm -w /app gitainer-test

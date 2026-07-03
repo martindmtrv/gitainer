@@ -1,4 +1,38 @@
-FROM docker:27.1.2-alpine3.20
+# ==============================================================================
+# Test Stage
+# ==============================================================================
+FROM docker:27.1.2-dind AS test
+
+# Install dependencies (git for tests, bash for scripts)
+RUN apk add --no-cache git make musl-dev go curl
+
+# Install bun
+RUN apk update && apk add bash git diffutils
+RUN apk --no-cache add ca-certificates wget curl
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+WORKDIR /app
+
+# Copy dependency definitions
+COPY bun.lockb packages/gitainer/package.json ./
+RUN bun install
+
+# Copy source
+COPY packages/gitainer/ .
+
+# Use custom entrypoint
+COPY packages/gitainer/test-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/test-entrypoint.sh
+
+ENTRYPOINT ["test-entrypoint.sh"]
+CMD ["bun", "test"]
+
+
+# ==============================================================================
+# Production Stage
+# ==============================================================================
+FROM docker:27.1.2-alpine3.20 AS production
 
 LABEL org.opencontainers.image.source=https://github.com/martindmtrv/gitainer
 LABEL org.opencontainers.image.description="Simple Git-based container management platform for Docker Standalone"

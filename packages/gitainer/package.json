@@ -5,7 +5,7 @@
   "scripts": {
     "start": "bun run --watch src/server/server.ts",
     "migrate": "bun run src/migration/PortainerMigration.ts",
-    "test:docker:build": "docker build -f Dockerfile.test -t gitainer-test .",
+    "test:docker:build": "docker build --target test -f Dockerfile -t gitainer-test ../..",
     "test:docker": "docker run --privileged --rm -w /app gitainer-test"
   },
   "dependencies": {

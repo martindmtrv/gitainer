@@ -6,6 +6,10 @@ LABEL org.opencontainers.image.description="Simple Git-based container managemen
 # setup go 
 RUN apk add --no-cache git make musl-dev go curl openssh-client
 
+# Configure SSH to skip host key checking for remote hosts
+RUN mkdir -p /etc/ssh && \
+    echo -e "Host *\n    StrictHostKeyChecking no\n    UserKnownHostsFile /dev/null\n" >> /etc/ssh/ssh_config
+
 # Configure Go
 ENV GOROOT=/usr/lib/go
 ENV GOPATH=/go

@@ -12,8 +12,6 @@ const TEST_FRAGMENTS_ROOT = "./tst/fragments";
 let gitainer: GitainerServer;
 let postHelper: NotifyWebhookTestHelper;
 
-// TODO: run tests from an isolated dind container to be more consistent and not impact host machine
-
 async function initEmptyRepo() {
   const docker = new DockerClient();
   process.env.FRAGMENTS_PATH = "fragments";

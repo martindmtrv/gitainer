@@ -27,6 +27,7 @@ services:
       - 3000:3000 # git server
       - 8080:8080 # webui and webhooks
     environment:
+      # GITAINER_API_KEY: <optional API key to secure webhooks>
       # STACK_UPDATE_ON_ENV_CHANGE: 1
       # POST_WEBHOOK: <some POST endpoint>
       # defaults

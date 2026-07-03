@@ -20,6 +20,32 @@ export class WebhookServer {
 
     this.app.use(prettyJSON());
 
+    this.app.use('/api/*', async (c, next) => {
+      const apiKey = process.env.GITAINER_API_KEY || process.env.WEBHOOK_API_KEY;
+      if (apiKey) {
+        const authHeader = c.req.header('Authorization');
+        const customHeader = c.req.header('X-API-Key') || c.req.header('x-api-key');
+
+        let token: string | undefined;
+        if (authHeader) {
+          if (authHeader.startsWith('Bearer ')) {
+            token = authHeader.substring(7);
+          } else {
+            token = authHeader;
+          }
+        } else if (customHeader) {
+          token = customHeader;
+        }
+
+        if (!token || token !== apiKey) {
+          return c.json({
+            err: "Unauthorized",
+          }, 401);
+        }
+      }
+      await next();
+    });
+
     // stream docker command api
     if (process.env.ENABLE_RAW_API) {
       this.app.get('/api/raw/docker/*', async (c) => {

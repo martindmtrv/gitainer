@@ -175,13 +175,13 @@ export class GitainerServer {
     }
   }
 
-  async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[], logger?: (msg: string) => void) {
+  async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[], logger?: (msg: string) => void, oldrev?: string) {
     const log = (msg: string) => {
       console.log(msg);
       if (logger) logger(msg);
     };
 
-    const latestChanges = changes || await this.bareRepo.getChanges("HEAD");
+    const latestChanges = changes || await this.bareRepo.getChangesForPush(oldrev, "HEAD");
     let res: any = {};
 
     let wasSuccessful = true;
@@ -226,7 +226,8 @@ export class GitainerServer {
         log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
 
         if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || change.type.toString().startsWith("R")) {
-          const oldContent = await this.bareRepo.getStack(stackName, "HEAD^");
+          const cleanUpTarget = (oldrev && !/^0+$/.test(oldrev)) ? oldrev : "HEAD^";
+          const oldContent = await this.bareRepo.getStack(stackName, cleanUpTarget);
           if (oldContent) {
             log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
             await this.docker.composeDown(oldContent, stackName);
@@ -297,12 +298,13 @@ export class GitainerServer {
         }
 
         // delete this commit
-        await this.bareRepo.repo.reset(ResetMode.SOFT, ["HEAD^"]);
+        const rollbackTarget = (oldrev && !/^0+$/.test(oldrev)) ? oldrev : "HEAD^";
+        await this.bareRepo.repo.reset(ResetMode.SOFT, [rollbackTarget]);
 
         // Restore successful stacks to previous state
         for (const stack of successfullyProcessedStacks) {
           try {
-            const oldContent = await this.bareRepo.getStack(stack.stackName);
+            const oldContent = await this.bareRepo.getStack(stack.stackName, "HEAD");
             if (oldContent) {
               log(`Restoring ${stack.stackName} to previous state`);
               await this.docker.composeUpdate(oldContent, stack.stackName);
@@ -346,7 +348,7 @@ while read oldrev newrev refname
 do
   if [ "$refname" = "refs/heads/${this.gitBranch}" ]; then
     echo "remote: Gitainer: Starting synthesis..."
-    curl -s -X POST "http://localhost:${port}/internal/synthesize?commit=$newrev"
+    curl -s -X POST "http://localhost:${port}/internal/synthesize?commit=$newrev&oldrev=$oldrev"
   fi
 done
 `;
@@ -356,13 +358,15 @@ done
     const originalHandle = this.repos.handle.bind(this.repos);
     this.repos.handle = (req: any, res: any) => {
       if (req.method === 'POST' && req.url.includes('/internal/synthesize')) {
+        const url = new URL(req.url, `http://localhost:${port}`);
+        const oldrev = url.searchParams.get('oldrev') || undefined;
         (async () => {
           try {
             // update process env on synthesis
             await updateProcessEnv();
             await this.synthesisTime(true, undefined, (msg) => {
               res.write(msg + "\n");
-            });
+            }, oldrev);
             this.synthesisRunning = false;
             res.end();
           } catch (e) {

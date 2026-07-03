@@ -112,6 +112,28 @@ export class GitConsumer {
     return GitConsumer.parseShowOutput(await this.repo.show(["--name-status", "--oneline", pointer]), `Change at ${pointer}`);
   }
 
+  async getChangesBetween(from: string, to: string = "HEAD"): Promise<GitChange[]> {
+    const output = await this.repo.raw(['diff', '--name-status', `${from}..${to}`]);
+    return output
+      .split("\n")
+      .filter(line => line.trim())
+      .map(entry => {
+        const parts = entry.split("\t");
+        return {
+          file: parts[1],
+          type: parts[0] as GitChangeType,
+          reason: `Change between ${from} and ${to}`,
+        };
+      });
+  }
+
+  async getChangesForPush(oldrev?: string, newrev: string = "HEAD"): Promise<GitChange[]> {
+    if (!oldrev || /^0+$/.test(oldrev)) {
+      return this.getChanges(newrev);
+    }
+    return this.getChangesBetween(oldrev, newrev);
+  }
+
   async listAllFiles(prefix: string): Promise<string[]> {
     try {
       const output = await this.repo.raw('ls-tree', '-r', 'main', '--name-only');

@@ -598,3 +598,142 @@ test("push stack using prefix_entrypoint, should compile entrypoint wrapper and 
   await $`docker rm -f prefix-app-test`;
 }, { timeout: 100_000 });
 
+test("push multiple commits successfully, should synthesize all changes", async () => {
+  await cloneAndConfigRepo();
+  const stackARoot = TEST_ROOT + "/client/docker/stacks/stack-multi-a";
+  const stackBRoot = TEST_ROOT + "/client/docker/stacks/stack-multi-b";
+
+  mkdirSync(stackARoot, { recursive: true });
+  mkdirSync(stackBRoot, { recursive: true });
+
+  // Commit 1: Add stack A
+  const composeA = `services:
+  app-a:
+    image: alpine
+    command: sleep infinity
+    container_name: multi-commit-a
+    stop_grace_period: 0s`;
+  await $`echo "${composeA}" > ${stackARoot}/docker-compose.yaml`;
+  await $`git add . && git commit -m "add stack A"`.cwd(TEST_ROOT + "/client/docker");
+
+  // Commit 2: Add stack B
+  const composeB = `services:
+  app-b:
+    image: alpine
+    command: sleep infinity
+    container_name: multi-commit-b
+    stop_grace_period: 0s`;
+  await $`echo "${composeB}" > ${stackBRoot}/docker-compose.yaml`;
+  await $`git add . && git commit -m "add stack B"`.cwd(TEST_ROOT + "/client/docker");
+
+  // Expecting webhook to notify for 2 changes
+  const postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg === "Synthesis succeeded for 2 stack(s)" && body.changes?.length === 2) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push both commits at once
+  await $`git push`.cwd(TEST_ROOT + "/client/docker");
+
+  await postPromise;
+
+  // Verify both containers are running
+  const runningContainers = await $`docker ps --filter name=multi-commit- --format '{{.Names}}'`.text();
+  expect(runningContainers).toContain("multi-commit-a");
+  expect(runningContainers).toContain("multi-commit-b");
+
+  // Cleanup containers
+  await $`docker rm -f multi-commit-a multi-commit-b`;
+}, { timeout: 100_000 });
+
+test("push multiple commits with a failure, should revert all commits and restore previous state", async () => {
+  await cloneAndConfigRepo();
+  const stackARoot = TEST_ROOT + "/client/docker/stacks/stack-multi-a";
+  const stackBRoot = TEST_ROOT + "/client/docker/stacks/stack-multi-b";
+
+  mkdirSync(stackARoot, { recursive: true });
+  mkdirSync(stackBRoot, { recursive: true });
+
+  // Pre-condition: commit 1 to push a valid stack A first
+  const composeA = `services:
+  app-a:
+    image: alpine
+    command: sleep infinity
+    container_name: multi-commit-a
+    stop_grace_period: 0s`;
+  await $`echo "${composeA}" > ${stackARoot}/docker-compose.yaml`;
+
+  let postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+  await $`git add . && git commit -m "add initial stack A" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Now we make multiple commits and push them.
+  // Commit 1: Update stack A with new label (valid)
+  const composeA2 = `services:
+  app-a:
+    image: alpine
+    command: sleep infinity
+    container_name: multi-commit-a
+    labels:
+      test.update: "true"
+    stop_grace_period: 0s`;
+  await $`echo "${composeA2}" > ${stackARoot}/docker-compose.yaml`;
+  await $`git add . && git commit -m "update stack A"`.cwd(TEST_ROOT + "/client/docker");
+
+  // Commit 2: Add stack B (invalid compose)
+  const composeB = `services:
+  app-b:
+    image: alpine
+    container_name:
+    stop_grace_period: 0s`;
+  await $`echo "${composeB}" > ${stackBRoot}/docker-compose.yaml`;
+  await $`git add . && git commit -m "add bad stack B"`.cwd(TEST_ROOT + "/client/docker");
+
+  // We expect a rollback
+  postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body) => {
+      if (body.err && body.err.includes("Got an error during synthesis")) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  const pushResult = await $`git push 2>&1`.cwd(TEST_ROOT + "/client/docker").text();
+  expect(pushResult).toContain("remote: Gitainer: Starting synthesis...");
+  expect(pushResult).toContain("remote: Got an error during synthesis, removing the bad commit");
+
+  await postPromise;
+
+  // Verify that multi-commit-a is still running, but restored to its pre-push state (without the label update)
+  const labelsA = await $`docker inspect multi-commit-a --format '{{json .Config.Labels}}'`.json();
+  expect(labelsA["test.update"]).toBeUndefined();
+
+  // Verify that multi-commit-b container does not exist
+  const multiCommitBExists = await $`docker ps -a --filter name=multi-commit-b --format '{{.Names}}'`.text();
+  expect(multiCommitBExists.trim()).toBe("");
+
+  // Verify git history on client: the branch on remote has been reset to the pre-push commit.
+  await $`git fetch origin`.cwd(TEST_ROOT + "/client/docker");
+  const remoteCommitMessage = await $`git log -1 --format=%s origin/main`.cwd(TEST_ROOT + "/client/docker").text();
+  expect(remoteCommitMessage.trim()).toBe("add initial stack A");
+
+  // Cleanup container
+  await $`docker rm -f multi-commit-a`;
+}, { timeout: 100_000 });
+
+

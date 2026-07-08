@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { $, YAML } from "bun";
+import { $ } from "bun";
 import jsyaml from "js-yaml";
 
 export interface RemoteHostConfig {
@@ -145,7 +145,7 @@ export class DockerClient {
 
     let parsed: any;
     try {
-      parsed = YAML.parse(composeString);
+      parsed = jsyaml.load(composeString);
     } catch (e) {
       return composeString;
     }
@@ -173,7 +173,7 @@ export class DockerClient {
 
     let parsed: any;
     try {
-      parsed = YAML.parse(composeString);
+      parsed = jsyaml.load(composeString);
     } catch (e) {
       return composeString;
     }

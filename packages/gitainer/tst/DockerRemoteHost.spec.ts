@@ -5,6 +5,7 @@ import { GitainerServer } from "../src/git/GitainerServer";
 import { $ } from "bun";
 import { mkdirSync, rmSync } from "node:fs";
 import { NotifyWebhookTestHelper } from "./helper/NotifyWebhookTestHelper";
+import jsyaml from "js-yaml";
 
 // Unit tests for extractRemoteHostConfig
 test("extractRemoteHostConfig extracts remote host and optional project directory correctly", () => {
@@ -201,3 +202,27 @@ test("push stack with invalid syntax remote host comment fails validation and pr
     await cleanup();
   }
 }, { timeout: 100_000 });
+
+test("DockerClient parses and stringifies configs containing special characters like ? correctly", async () => {
+  const client = new DockerClient();
+  const compose = `#@ ubuntu@129.153.206.7:/home/ubuntu/portainer
+services:
+  refbounty:
+    image: alpine
+    environment:
+      DB_CONNECT_URL: mongodb://localhost:27017/db?replicaSet=rs0
+`;
+  
+  const stripped = client.stripPrefixEntrypoint(compose);
+  expect(stripped).toContain("?replicaSet=rs0");
+  
+  const preprocessed = await client.preprocessCompose(compose);
+  expect(preprocessed).toContain("?replicaSet=rs0");
+
+  const parsedStripped = jsyaml.load(stripped) as any;
+  expect(parsedStripped.services.refbounty.environment.DB_CONNECT_URL).toBe("mongodb://localhost:27017/db?replicaSet=rs0");
+
+  const parsedPreprocessed = jsyaml.load(preprocessed) as any;
+  expect(parsedPreprocessed.services.refbounty.environment.DB_CONNECT_URL).toBe("mongodb://localhost:27017/db?replicaSet=rs0");
+});
+

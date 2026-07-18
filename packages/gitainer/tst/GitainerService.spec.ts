@@ -89,7 +89,7 @@ test("push redis stack, starts redis service and sends POST notification", async
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
       if (
-        body.msg === "Synthesis succeeded for 1 stack(s)" &&
+        body.msg?.startsWith("Synthesis succeeded for 1 stack(s)") &&
         body.changes?.length === 1 &&
         body.changes[0].file === "stacks/redis/docker-compose.yaml"
       ) {
@@ -123,7 +123,7 @@ test("bad compose file, should fail to deploy", async () => {
   let postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
       if (
-        body.msg === "Synthesis succeeded for 1 stack(s)" &&
+        body.msg?.startsWith("Synthesis succeeded for 1 stack(s)") &&
         body.changes?.length === 1 &&
         body.changes[0].file === "stacks/redis/docker-compose.yaml"
       ) {
@@ -158,7 +158,8 @@ test("bad compose file, should fail to deploy", async () => {
   const pushResult = await $`git add . && git commit -m "add bad file" && git push 2>&1`.cwd(TEST_ROOT + "/client/docker").text();
 
   expect(pushResult).toContain("remote: Gitainer: Starting synthesis...");
-  expect(pushResult).toContain("remote: Got an error during synthesis, removing the bad commit");
+  expect(pushResult).toContain("remote: Got an error during synthesis of stack");
+  expect(pushResult).toContain("removing the bad commit");
 
   await postPromise;
 }, {
@@ -181,7 +182,7 @@ test("push stack using fragments, should resolve and deploy", async () => {
   // Setup waiter
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
-      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+      if (body.msg?.startsWith("Synthesis succeeded for 1 stack(s)")) {
         setTimeout(() => resolve(null), 1000);
       } else {
         setTimeout(() => reject(body), 1000);
@@ -236,7 +237,7 @@ services:
   // Setup waiter
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
-      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+      if (body.msg?.startsWith("Synthesis succeeded for 1 stack(s)")) {
         setTimeout(() => resolve(null), 1000);
       } else {
         setTimeout(() => reject(body), 1000);
@@ -529,7 +530,7 @@ services:
 
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
-      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+      if (body.msg?.startsWith("Synthesis succeeded for 1 stack(s)")) {
         setTimeout(() => resolve(null), 1000);
       } else {
         setTimeout(() => reject(body), 1000);
@@ -572,7 +573,7 @@ test("push stack using prefix_entrypoint, should compile entrypoint wrapper and 
 
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
-      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+      if (body.msg?.startsWith("Synthesis succeeded for 1 stack(s)")) {
         setTimeout(() => resolve(null), 1000);
       } else {
         setTimeout(() => reject(body), 1000);
@@ -627,7 +628,7 @@ test("push multiple commits successfully, should synthesize all changes", async 
   // Expecting webhook to notify for 2 changes
   const postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
-      if (body.msg === "Synthesis succeeded for 2 stack(s)" && body.changes?.length === 2) {
+      if (body.msg?.startsWith("Synthesis succeeded for 2 stack(s)") && body.changes?.length === 2) {
         setTimeout(() => resolve(null), 1000);
       } else {
         setTimeout(() => reject(body), 1000);
@@ -668,7 +669,7 @@ test("push multiple commits with a failure, should revert all commits and restor
 
   let postPromise = new Promise((resolve, reject) => {
     postHelper.callback = (body) => {
-      if (body.msg === "Synthesis succeeded for 1 stack(s)") {
+      if (body.msg?.startsWith("Synthesis succeeded for 1 stack(s)")) {
         setTimeout(() => resolve(null), 1000);
       } else {
         setTimeout(() => reject(body), 1000);
@@ -713,7 +714,8 @@ test("push multiple commits with a failure, should revert all commits and restor
 
   const pushResult = await $`git push 2>&1`.cwd(TEST_ROOT + "/client/docker").text();
   expect(pushResult).toContain("remote: Gitainer: Starting synthesis...");
-  expect(pushResult).toContain("remote: Got an error during synthesis, removing the bad commit");
+  expect(pushResult).toContain("remote: Got an error during synthesis of stack");
+  expect(pushResult).toContain("removing the bad commit");
 
   await postPromise;
 

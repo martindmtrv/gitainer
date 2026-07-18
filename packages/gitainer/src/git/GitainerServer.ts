@@ -6,6 +6,7 @@ import type { DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
 import { createInitialCommitWithReadme } from './gitUtils';
+import { WebhookEventType, webhookTitle } from '../webhooks/WebhookEventType';
 
 export class GitainerServer {
   readonly bareDir: string;
@@ -171,11 +172,11 @@ export class GitainerServer {
 
     const stacks = await this.bareRepo.listStacksWithEnvReference(modifiedEnvs);
     if (stacks.length > 0) {
-      await this.synthesisTime(false, stacks);
+      await this.synthesisTime(false, WebhookEventType.ENV_UPDATE, stacks);
     }
   }
 
-  async synthesisTime(shouldRevertOnFail: boolean, changes?: GitChange[], logger?: (msg: string) => void, oldrev?: string) {
+  async synthesisTime(shouldRevertOnFail: boolean, event: WebhookEventType, changes?: GitChange[], logger?: (msg: string) => void, oldrev?: string) {
     const log = (msg: string) => {
       console.log(msg);
       if (logger) logger(msg);
@@ -251,8 +252,9 @@ export class GitainerServer {
         });
       }
 
+      const changedStackNames = combinedStackChanges.map(change => change.file).join(', ');
       res = {
-        msg: `Synthesis succeeded for ${combinedStackChanges.length} stack(s)`,
+        msg: `Synthesis succeeded for ${combinedStackChanges.length} stack(s)${changedStackNames ? `: ${changedStackNames}` : ''}`,
         changes: combinedStackChanges
       };
 
@@ -269,18 +271,19 @@ export class GitainerServer {
       if (!shouldRevertOnFail) {
         res = {
           ...res,
-          err: `Got an error during synthesis: ${res.output}`,
+          err: `Got an error during synthesis of stack "${currentStack}": ${res.output}`,
         };
       } else {
+        const succeededStacks = combinedStackChanges.length === 0 || currentStack === combinedStackChanges[0].file ? [] :
+          combinedStackChanges
+            .slice(
+              0,
+              combinedStackChanges.findIndex(change => change.file === currentStack)
+            ).map(stack => stack.file);
         res = {
           ...res,
-          err: `Got an error during synthesis, removing the bad commit. Succeeded stacks will not be rolled back. Error: ${res.output}`,
-          suceededStacks: combinedStackChanges.length === 0 || currentStack === combinedStackChanges[0].file ? [] :
-            combinedStackChanges
-              .slice(
-                0,
-                combinedStackChanges.findIndex(change => change.file === currentStack)
-              ).map(stack => stack.file),
+          err: `Got an error during synthesis of stack "${currentStack}", removing the bad commit. Succeeded stacks (not rolled back): ${succeededStacks.length ? succeededStacks.join(', ') : 'none'}. Error: ${res.output}`,
+          suceededStacks: succeededStacks,
           failedStack: currentStack,
           latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,
         };
@@ -319,12 +322,13 @@ export class GitainerServer {
     }
 
     log("=== Synthesis end ===");
+    res.title = webhookTitle(event);
     console.log(res);
 
     if (this.postWebhook) {
       log(`== Sending POST to ${this.postWebhook} ==`);
       await fetch(this.postWebhook, {
-        body: JSON.stringify({ body: JSON.stringify(res, undefined, 2) }),
+        body: JSON.stringify(res),
         headers: {
           "Content-Type": "application/json",
         },
@@ -364,7 +368,7 @@ done
           try {
             // update process env on synthesis
             await updateProcessEnv();
-            await this.synthesisTime(true, undefined, (msg) => {
+            await this.synthesisTime(true, WebhookEventType.GIT_PUSH, undefined, (msg) => {
               res.write(msg + "\n");
             }, oldrev);
             this.synthesisRunning = false;

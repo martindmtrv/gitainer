@@ -59,6 +59,82 @@ git push
 
 "mystack" will now be deployed on the host machine
 
+### POST Webhook
+
+If `POST_WEBHOOK` is set, Gitainer will send an HTTP POST with a `Content-Type: application/json` header to that URL after a stack update completes. The body is the plain JSON result object itself (not a string-wrapped copy) — parse it directly as JSON.
+
+Every payload includes a `title` field so you can tell which of the three triggers fired it: `"Gitainer: Git Push"`, `"Gitainer: Env Update"`, or `"Gitainer: Webhook"`. The `msg`/`err` field is a self-contained status string that names the affected stack(s), so you don't need to also inspect `changes`/`stackName`/`output` just to know what happened — handy if you're feeding this straight into a notifier.
+
+There are two triggers for this webhook, each with a slightly different payload shape:
+
+**Push-triggered synthesis** (a `git push` deploying one or more stacks — `title: "Gitainer: Git Push"` — or a resynthesis triggered by `STACK_UPDATE_ON_ENV_CHANGE` — `title: "Gitainer: Env Update"`) fires the webhook on both success and failure:
+```json
+{
+  "title": "Gitainer: Git Push",
+  "msg": "Synthesis succeeded for 1 stack(s): stacks/mystack/docker-compose.yaml",
+  "changes": [
+    { "file": "stacks/mystack/docker-compose.yaml", "type": "M", "reason": "..." }
+  ]
+}
+```
+
+On failure from a `git push` (where the bad commit is rolled back), the payload also reports what was rolled back:
+```json
+{
+  "title": "Gitainer: Git Push",
+  "err": "Got an error during synthesis of stack \"stacks/mystack/docker-compose.yaml\", removing the bad commit. Succeeded stacks (not rolled back): stacks/other/docker-compose.yaml. Error: ...",
+  "output": "...",
+  "failedStackContent": "...",
+  "suceededStacks": ["stacks/other/docker-compose.yaml"],
+  "failedStack": "stacks/mystack/docker-compose.yaml",
+  "latestCommit": {
+    "hash": "abc1234...",
+    "date": "2026-07-18 07:30:00 +0000",
+    "message": "my first stack",
+    "refs": "HEAD -> main",
+    "body": "",
+    "author_name": "...",
+    "author_email": "..."
+  }
+}
+```
+
+On failure from an env-change-triggered resynthesis (no commit to roll back), the payload is just:
+```json
+{
+  "title": "Gitainer: Env Update",
+  "err": "Got an error during synthesis of stack \"stacks/mystack/docker-compose.yaml\": ...",
+  "output": "...",
+  "failedStackContent": "..."
+}
+```
+
+**API-triggered update** (`POST /api/stacks/:stackName`, `title: "Gitainer: Webhook"`) only fires the webhook on success — a failed update responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`:
+```json
+{
+  "title": "Gitainer: Webhook",
+  "stackName": "mystack",
+  "msg": "Successfully updated stack mystack: ...",
+  "output": "..."
+}
+```
+
+#### Example: forwarding to Apprise
+
+[Apprise API](https://github.com/caronc/apprise-api) is a self-hosted REST front-end for [Apprise](https://github.com/caronc/apprise) that fans a single webhook out to Discord, Telegram, ntfy, Slack, and dozens of other notification services. Point `POST_WEBHOOK` at its `/notify/<tag>` endpoint and remap Gitainer's `msg`/`err` fields onto Apprise's `body` field:
+
+```
+POST_WEBHOOK=https://apprise.example.com/notify/gitainer?:msg=body&:err=body
+```
+
+`title` doesn't need remapping — Apprise API already reads a top-level `title` key by default, and Gitainer's payload already has one, so `Gitainer: Git Push` / `Gitainer: Env Update` / `Gitainer: Webhook` shows up as the notification title automatically.
+
+In docker-compose, quote the value since it contains `?`, `&`, and `:`:
+```yaml
+environment:
+  POST_WEBHOOK: "https://apprise.example.com/notify/gitainer?:msg=body&:err=body"
+```
+
 ### Variables
 
 Docker compose natively supports [variable interpolation](https://docs.docker.com/compose/environment-variables/variable-interpolation/) meaning that any variable in your environment will be visible to Gitainer. 

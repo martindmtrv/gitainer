@@ -5,6 +5,7 @@ import { prettyJSON } from "hono/pretty-json";
 import { stream } from 'hono/streaming';
 import { $, serve, ShellError } from "bun";
 import type { GitainerServer } from "../git/GitainerServer";
+import { WebhookEventType, webhookTitle } from "./WebhookEventType";
 
 export class WebhookServer {
   readonly app: Hono;
@@ -93,16 +94,18 @@ export class WebhookServer {
 
       try {
         const output = await docker.composeUpdate(stackFile, stackName);
+        const outputText = output.text();
         const res = {
+          title: webhookTitle(WebhookEventType.WEBHOOK),
           stackName,
-          msg: `Successfully updated stack ${stackName}`,
-          output: output.text(),
+          msg: `Successfully updated stack ${stackName}: ${outputText}`,
+          output: outputText,
         };
 
         if (this.gitainer.postWebhook) {
           console.log(`== Sending POST to ${this.gitainer.postWebhook} ==`);
           await fetch(this.gitainer.postWebhook, {
-            body: JSON.stringify({ body: JSON.stringify(res, undefined, 2) }),
+            body: JSON.stringify(res),
             headers: {
               "Content-Type": "application/json",
             },

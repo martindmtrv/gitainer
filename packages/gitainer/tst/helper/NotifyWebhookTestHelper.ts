@@ -6,7 +6,7 @@ export class NotifyWebhookTestHelper {
   readonly server: Hono;
   readonly listener: Server;
 
-  callback?: (body: { msg: string, err?: string, changes?: GitChange[], failedStack?: string }) => void;
+  callback?: (body: { title?: string, msg: string, err?: string, changes?: GitChange[], failedStack?: string }) => void;
 
   constructor(path: string, port: number) {
     this.server = new Hono();
@@ -15,7 +15,7 @@ export class NotifyWebhookTestHelper {
       if (this.callback) {
         const body = await c.req.json();
         console.log("[NotifyWebhookTestHelper] got POST", body);
-        this.callback(JSON.parse(body.body));
+        this.callback(body);
       }
       return c.json({ ok: true });
     });

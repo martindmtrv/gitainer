@@ -1,0 +1,17 @@
+name: Test PR
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        name: Check out code
+
+      - name: Build Test Image
+        run: docker build --target test -f packages/gitainer/Dockerfile -t gitainer-test .
+
+      - name: Run Tests
+        run: docker run --privileged --rm -w /app gitainer-test

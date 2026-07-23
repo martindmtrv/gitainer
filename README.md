@@ -30,6 +30,8 @@ services:
       # GITAINER_API_KEY: <optional API key to secure webhooks>
       # STACK_UPDATE_ON_ENV_CHANGE: 1
       # POST_WEBHOOK: <some POST endpoint>
+      # GITAINER_SELF_STACK: <name of the stack that is gitainer's own deployment, see Self-Updating Gitainer>
+      # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:27.1.2-alpine3.20
       # defaults
       # GIT_ROOT: /var/gitainer/repo
       # GITAINER_DATA: /var/gitainer/data
@@ -230,6 +232,51 @@ If you run `ssh-agent` on the host, mount the SSH agent socket and pass the envi
     environment:
       - SSH_AUTH_SOCK=/ssh-agent
 ```
+
+### Self-Updating Gitainer
+
+Gitainer can manage its own deployment as a normal stack, so pushing a change to it (e.g. bumping the image tag) pulls the new image and redeploys itself. This isn't automatic like other stacks: normally a stack update runs `down` before `pull`/`up`, but if the stack being updated is gitainer's own container, that `down` would kill the very process performing the update. To make this safe, set `GITAINER_SELF_STACK` to the name of the stack that is gitainer's own deployment (e.g. `gitainer` if it lives at `stacks/gitainer/docker-compose.yaml`):
+
+```yaml
+environment:
+  GITAINER_SELF_STACK: gitainer
+  # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:27.1.2-alpine3.20 (default, override for air-gapped/mirrored registries)
+```
+
+With `GITAINER_SELF_STACK` set, a push that touches that stack pulls the new image in-process (safe - it never touches the running container), then hands the actual recreate off to a short-lived, detached helper container launched via the Docker socket. That helper survives gitainer's own container being replaced, since it's a sibling container rather than a child process.
+
+A few things to know:
+- **Fire-and-forget, no auto-rollback.** Once the helper container is launched, gitainer can't observe or roll back the outcome the way it does for other stacks - a broken self-update must be fixed forward with another push, not reverted automatically.
+- **Deletes are protected.** Pushing a deletion of the self-stack is refused (the running container is left untouched) rather than silently tearing down the only thing that could push a fix. The refusal is reported as a `warnings` entry on the synthesis result / `POST_WEBHOOK` payload.
+- **No remote hosts.** A `#@` remote-host comment on the self-stack is rejected - gitainer can only self-update the host it's actually running on.
+- **Misconfiguration risk.** If `GITAINER_SELF_STACK` doesn't match gitainer's actual compose project, self-update protection silently doesn't apply and the original down-yourself problem can reoccur. Gitainer logs a startup warning on a mismatch it can detect, but double-check the name matches your deployment.
+
+#### Migrating an existing deployment into a self-stack
+
+If you're already running gitainer (or any compose deployment) via `docker compose up -d` outside of gitainer's management, you can bring it under self-update with no downtime as long as the compose project name stays the same before and after:
+
+1. Find the project name your current deployment is running under (it defaults to the directory name you ran `docker compose up` from, or check with `docker inspect <container> --format '{{index .Config.Labels "com.docker.compose.project"}}'`).
+2. Use that exact name as your self-stack name going forward - it needs to match both `GITAINER_SELF_STACK` and the `stacks/<name>/` directory you push to, so that the sibling container's `up -d --force-recreate` recognizes your existing containers as the same project and replaces them in place instead of standing up a second, conflicting copy.
+3. Add `GITAINER_SELF_STACK: <name>` to your current deployment's environment and restart it once (`docker compose up -d`) to pick it up. This is the only manual step - after this, updates flow through git pushes.
+4. Clone gitainer's repo, create `stacks/<name>/docker-compose.yaml` with the same service definitions you're already running, commit, and push. Gitainer treats this first push the same as any other self-update (routed through the safe `composeSelfUpdate` path), so it force-recreates your existing containers under the matching project rather than starting fresh ones.
+
+##### Porting an external `.env` file
+
+If your existing deployment sources variables from a `.env` file next to its compose file (docker compose's native auto-loading), that file has no equivalent once the compose file itself moves into gitainer's git repo - the "[Variables](#variables)" mechanism above needs those variables in gitainer's own process environment, not in a file sitting next to a compose file gitainer doesn't run from.
+
+The simplest way to carry it over is to mount the existing `.env` file straight into gitainer's container: Bun (which gitainer runs on) automatically loads a `.env` file from its working directory at startup, so mounting yours to `/home/gitainer/.env` makes every variable in it available for compose variable interpolation across all your managed stacks, exactly as if it had been set under `environment:` directly:
+
+```yaml
+services:
+  gitainer:
+    volumes:
+      - ./path/to/existing/.env:/home/gitainer/.env:ro
+      ...
+```
+
+Since it's only read once at process startup, edits to the mounted file require restarting the gitainer container to take effect - the same caveat that already applies to variables set directly under `environment:`.
+
+This works for self-stacks too, not just other managed stacks: gitainer forwards its own environment (mounted `.env` included) into the detached sibling container that performs the self-update recreate, so `${VAR}`-style interpolation in the self-stack's own compose file resolves the same way there as it does everywhere else.
 
 ## Fragments
 

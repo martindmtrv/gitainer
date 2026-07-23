@@ -19,6 +19,7 @@ export class GitainerServer {
   readonly stacksPath: string;
   readonly stackUpdateOnEnvChange: boolean;
   readonly postWebhook?: string;
+  readonly selfStackName?: string;
 
   static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
 
@@ -37,10 +38,12 @@ export class GitainerServer {
     docker: DockerClient,
     stackUpdateOnEnvChange: boolean = true,
     postWebhook?: string,
+    selfStackName?: string,
   ) {
     this.repoName = repoName;
     this.gitBranch = gitBranch;
     this.postWebhook = postWebhook;
+    this.selfStackName = selfStackName;
     this.gitainerDataPath = gitainerDataPath;
     this.stackUpdateOnEnvChange = stackUpdateOnEnvChange;
     this.fragmentsPath = fragmentsPath;
@@ -176,6 +179,10 @@ export class GitainerServer {
     }
   }
 
+  isSelfStack(stackName: string): boolean {
+    return !!this.selfStackName && stackName === this.selfStackName;
+  }
+
   async synthesisTime(shouldRevertOnFail: boolean, event: WebhookEventType, changes?: GitChange[], logger?: (msg: string) => void, oldrev?: string) {
     const log = (msg: string) => {
       console.log(msg);
@@ -212,8 +219,17 @@ export class GitainerServer {
       }
     });
 
-    const combinedStackChanges = Array.from(uniqueChangesMap.values());
+    const allStackChanges = Array.from(uniqueChangesMap.values());
+    // process the self stack last, so any other stacks in this push get their fully
+    // reversible update+rollback before the irreversible self-update is triggered
+    const combinedStackChanges = this.selfStackName
+      ? [
+          ...allStackChanges.filter(change => !this.isSelfStack((GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1])),
+          ...allStackChanges.filter(change => this.isSelfStack((GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1])),
+        ]
+      : allStackChanges;
     const successfullyProcessedStacks: { file: string, stackName: string, content: string }[] = [];
+    const selfStackWarnings: string[] = [];
 
     try {
       if (combinedStackChanges.length == 0) {
@@ -225,6 +241,24 @@ export class GitainerServer {
         currentStack = change.file;
         const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
         log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
+
+        if (this.isSelfStack(stackName)) {
+          if (change.type === GitChangeType.DELETE) {
+            const warning = `Refusing to delete self-stack "${stackName}": the running gitainer container was left untouched. Remove it manually via docker if this was intentional.`;
+            log(warning);
+            selfStackWarnings.push(warning);
+            continue;
+          }
+
+          hydratedCompose = await this.bareRepo.getStack(stackName) as string;
+
+          log(`<= ${change.file} (self-update) =>`);
+          // We don't log the full compose file to the git client as it can be very long
+          console.log(hydratedCompose);
+
+          await this.docker.composeSelfUpdate(hydratedCompose, stackName);
+          continue;
+        }
 
         if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || change.type.toString().startsWith("R")) {
           const cleanUpTarget = (oldrev && !/^0+$/.test(oldrev)) ? oldrev : "HEAD^";
@@ -255,7 +289,8 @@ export class GitainerServer {
       const changedStackNames = combinedStackChanges.map(change => change.file).join(', ');
       res = {
         msg: `Synthesis succeeded for ${combinedStackChanges.length} stack(s)${changedStackNames ? `: ${changedStackNames}` : ''}`,
-        changes: combinedStackChanges
+        changes: combinedStackChanges,
+        ...(selfStackWarnings.length ? { warnings: selfStackWarnings } : {}),
       };
 
       log(res.msg);

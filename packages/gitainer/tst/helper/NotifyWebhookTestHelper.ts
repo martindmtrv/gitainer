@@ -6,7 +6,7 @@ export class NotifyWebhookTestHelper {
   readonly server: Hono;
   readonly listener: Server;
 
-  callback?: (body: { title?: string, msg: string, err?: string, changes?: GitChange[], failedStack?: string }) => void;
+  callback?: (body: { title?: string, msg: string, err?: string, changes?: GitChange[], failedStack?: string, warnings?: string[] }) => void;
 
   constructor(path: string, port: number) {
     this.server = new Hono();

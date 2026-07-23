@@ -93,8 +93,16 @@ export class WebhookServer {
       console.log(`== stack update from POST webhook -> ${stackName} ==`);
 
       try {
-        const output = await docker.composeUpdate(stackFile, stackName);
-        const outputText = output.text();
+        const isSelfStack = this.gitainer.isSelfStack(stackName);
+        let outputText: string;
+        if (isSelfStack) {
+          await docker.composeSelfUpdate(stackFile, stackName);
+          outputText = "self-update handed off to a detached helper container";
+        } else {
+          const output = await docker.composeUpdate(stackFile, stackName);
+          outputText = output.text();
+        }
+
         const res = {
           title: webhookTitle(WebhookEventType.WEBHOOK),
           stackName,
@@ -116,9 +124,10 @@ export class WebhookServer {
 
         return c.json(res);
       } catch (e) {
-        console.error((e as ShellError).stderr.toString());
+        const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+        console.error(errMsg);
         return c.json({
-          err: (e as ShellError)?.stderr?.toString(),
+          err: errMsg,
         }, 400);
       }
     });

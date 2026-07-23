@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { $ } from "bun";
 import jsyaml from "js-yaml";
+import selfUpdateScript from "./self-update.sh" with { type: "text" };
 
 export interface RemoteHostConfig {
   dockerHost: string;
@@ -119,6 +120,79 @@ export class DockerClient {
     } else {
       return await $`docker-compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`;
     }
+  }
+
+  selfUpdateContainerName(stackName: string): string {
+    return `gitainer-self-update-${stackName}`;
+  }
+
+  /**
+   * Best-effort lookup of the compose project label on gitainer's own running container
+   * (Docker sets HOSTNAME to the container's short ID by default), used only to warn on
+   * startup if GITAINER_SELF_STACK doesn't match gitainer's actual deployment.
+   */
+  async getOwnComposeProject(): Promise<string | undefined> {
+    if (!process.env.HOSTNAME) {
+      return undefined;
+    }
+
+    try {
+      const label = await $`docker inspect ${process.env.HOSTNAME} --format ${'{{ index .Config.Labels "com.docker.compose.project" }}'}`.text();
+      return label.trim() || undefined;
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  // env vars that are process/runtime bookkeeping rather than gitainer config or compose
+  // variable-interpolation values - forwarding them into the sibling would be pointless at
+  // best (nobody names a compose variable "PATH") and could shadow the sibling's own values
+  // at worst, so they're excluded from composeSelfUpdate's environment forwarding below.
+  private static readonly SELF_UPDATE_ENV_FORWARD_DENYLIST = new Set([
+    "PATH", "HOME", "HOSTNAME", "PWD", "OLDPWD", "SHLVL", "_", "STACK_NAME",
+  ]);
+
+  /**
+   * Self-update can't run down()/up() in-process like composeUpdate() does: if the target
+   * stack is gitainer's own container, stopping it to recreate would kill the very process
+   * running this sequence before it finishes. pull() is safe to run in-process though (it
+   * never touches the running container), so only the recreate is handed off to a detached
+   * sibling container (launched via the docker socket, so it survives gitainer's own container
+   * being replaced) - if pull() fails here, the running gitainer container is never touched.
+   */
+  async composeSelfUpdate(composeString: string, stackName: string): Promise<void> {
+    const config = extractRemoteHostConfig(composeString);
+    if (config) {
+      throw new Error(`Self-update stack "${stackName}" cannot use a remote host (#@) comment; gitainer can only self-update the host it is running on`);
+    }
+
+    const strippedCompose = this.stripPrefixEntrypoint(composeString);
+    const strippedFilename = this.composeStringToTmp(strippedCompose);
+    await $`docker-compose -f ${strippedFilename} pull`;
+
+    const hydratedCompose = await this.preprocessCompose(composeString);
+    const hydratedFilename = this.composeStringToTmp(hydratedCompose);
+    const helperImage = process.env.GITAINER_SELF_UPDATE_HELPER_IMAGE || "docker:27.1.2-alpine3.20";
+    const containerName = this.selfUpdateContainerName(stackName);
+
+    // Forward gitainer's own environment into the sibling (bare `-e KEY` makes docker pull the
+    // value from the invoking process, i.e. gitainer's own process.env) so compose variable
+    // interpolation (see README "Variables") resolves the same way here as it does in-process
+    // for pull() above and for every other stack's composeUpdate().
+    const envForwarding = Object.keys(process.env)
+      .filter(key => !DockerClient.SELF_UPDATE_ENV_FORWARD_DENYLIST.has(key))
+      .flatMap(key => ["-e", key]);
+
+    // The hydrated compose is handed to the sibling as a real file rather than an env var
+    // (avoids the ~128KB env var size limit), via `docker cp` instead of a bind mount: `cp`
+    // goes over the docker socket itself, copying from wherever gitainer's own tmp file
+    // actually lives into the container's filesystem, so it needs no host-path translation or
+    // self-container-identification - it behaves the same whether gitainer runs bare or inside
+    // a container. `create` (not `run`) so the file can be copied in before the entrypoint
+    // executes; `--rm` still auto-removes the container once it exits, same as before.
+    await $`docker create --rm --name ${containerName} -v /var/run/docker.sock:/var/run/docker.sock ${envForwarding} -e STACK_NAME="${stackName}" ${helperImage} sh -c "${selfUpdateScript}"`;
+    await $`docker cp ${hydratedFilename} ${containerName}:/self-update.yaml`;
+    await $`docker start ${containerName}`;
   }
 
   async composeDown(composeString: string, stackName: string) {

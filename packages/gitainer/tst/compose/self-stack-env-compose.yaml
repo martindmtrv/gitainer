@@ -1,0 +1,8 @@
+services:
+  selfstack-env-app:
+    container_name: selfstack-env-test
+    image: alpine
+    command: sleep infinity
+    stop_grace_period: 0s
+    environment:
+      FORWARDED_VALUE: ${GITAINER_TEST_FORWARD_VAR}

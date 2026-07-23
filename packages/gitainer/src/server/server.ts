@@ -19,6 +19,7 @@ const gitainer = new GitainerServer(
   docker,
   !!process.env.STACK_UPDATE_ON_ENV_CHANGE,
   process.env.POST_WEBHOOK as string,
+  process.env.GITAINER_SELF_STACK,
 );
 
 const bareRepo = await gitainer.initRepo();
@@ -26,6 +27,14 @@ const webhook = new WebhookServer(docker, bareRepo, gitainer);
 
 gitainer.listen(3000);
 webhook.listen(8080);
+
+if (process.env.GITAINER_SELF_STACK) {
+  docker.getOwnComposeProject().then(ownProject => {
+    if (ownProject && ownProject !== process.env.GITAINER_SELF_STACK) {
+      console.warn(`WARNING: GITAINER_SELF_STACK is set to "${process.env.GITAINER_SELF_STACK}" but this container's compose project is "${ownProject}" - self-update protection will not apply to your actual deployment until these match.`);
+    }
+  });
+}
 
 if (process.env.INFISICAL_URL) {
   setInterval(async () => {

@@ -1,10 +1,10 @@
 services:
   gitainer:
-    build:
-      context: .
-      dockerfile: packages/gitainer/Dockerfile
-      target: production
+    image: ghcr.io/martindmtrv/gitainer:latest
     volumes:
+      - ./packages/gitainer/resources/bare:/var/gitainer/repo
+      - ./packages/gitainer/resources/data:/var/gitainer/data
+      - ./packages/gitainer/resources/stacks:/var/gitainer/stacks
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - 3000:3000 # git server
@@ -21,3 +21,5 @@ services:
       # GIT_BRANCH: main
       # FRAGMENTS_PATH=fragments
       # STACKS_PATH=/var/gitainer/stacks
+
+

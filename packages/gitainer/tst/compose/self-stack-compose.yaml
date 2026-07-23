@@ -1,0 +1,6 @@
+services:
+  selfstack-app:
+    container_name: selfstack-app-test
+    image: alpine
+    command: sleep infinity
+    stop_grace_period: 0s

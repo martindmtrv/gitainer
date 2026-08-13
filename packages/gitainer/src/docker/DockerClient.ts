@@ -195,6 +195,32 @@ export class DockerClient {
     await $`docker start ${containerName}`;
   }
 
+  /**
+   * Containers labelled `gitainer.identifier=<identifier>` (in any stack, e.g. via a
+   * fragment shared across stacks) can be bulk stopped/started together, independent of
+   * which compose stack they belong to.
+   */
+  private async listContainerIdsByLabel(identifier: string): Promise<string[]> {
+    const output = await $`docker ps -aq --filter label=gitainer.identifier=${identifier}`.text();
+    return output.split("\n").map(id => id.trim()).filter(Boolean);
+  }
+
+  async stopContainersByLabel(identifier: string): Promise<string[]> {
+    const ids = await this.listContainerIdsByLabel(identifier);
+    if (ids.length > 0) {
+      await $`docker stop ${ids}`;
+    }
+    return ids;
+  }
+
+  async startContainersByLabel(identifier: string): Promise<string[]> {
+    const ids = await this.listContainerIdsByLabel(identifier);
+    if (ids.length > 0) {
+      await $`docker start ${ids}`;
+    }
+    return ids;
+  }
+
   async composeDown(composeString: string, stackName: string) {
     const strippedCompose = this.stripPrefixEntrypoint(composeString);
     const filename = this.composeStringToTmp(strippedCompose);

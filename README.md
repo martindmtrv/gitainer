@@ -121,6 +121,24 @@ On failure from an env-change-triggered resynthesis (no commit to roll back), th
 }
 ```
 
+**Bulk stop/start by label** (`POST /api/labels/:identifier/stop`, `POST /api/labels/:identifier/start`, `title: "Gitainer: Webhook"`) stops or starts every container labelled `gitainer.identifier=<identifier>`, regardless of which stack it belongs to. Only fires the webhook on success — a docker error responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`:
+```json
+{
+  "title": "Gitainer: Webhook",
+  "identifier": "myapp",
+  "msg": "Stopped 2 container(s) labelled gitainer.identifier=myapp",
+  "containerIds": ["abc123...", "def456..."]
+}
+```
+
+To make containers eligible, label them in the compose file:
+```yaml
+services:
+  app:
+    labels:
+      gitainer.identifier: myapp
+```
+
 #### Example: forwarding to Apprise
 
 [Apprise API](https://github.com/caronc/apprise-api) is a self-hosted REST front-end for [Apprise](https://github.com/caronc/apprise) that fans a single webhook out to Discord, Telegram, ntfy, Slack, and dozens of other notification services. Point `POST_WEBHOOK` at its `/notify/<tag>` endpoint and remap Gitainer's `msg`/`err` fields onto Apprise's `body` field:

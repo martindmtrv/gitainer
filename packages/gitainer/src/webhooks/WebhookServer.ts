@@ -132,6 +132,73 @@ export class WebhookServer {
       }
     });
 
+    // bulk stop/start every container labelled gitainer.identifier=<identifier>, regardless of stack
+    this.app.post('/api/labels/:identifier/stop', async (c) => {
+      const identifier = c.req.param('identifier');
+
+      try {
+        const containerIds = await docker.stopContainersByLabel(identifier);
+
+        const res = {
+          title: webhookTitle(WebhookEventType.WEBHOOK),
+          identifier,
+          msg: `Stopped ${containerIds.length} container(s) labelled gitainer.identifier=${identifier}`,
+          containerIds,
+        };
+
+        if (this.gitainer.postWebhook) {
+          await fetch(this.gitainer.postWebhook, {
+            body: JSON.stringify(res),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          }).catch(err => console.error(err));
+        }
+
+        return c.json(res);
+      } catch (e) {
+        const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+        console.error(errMsg);
+        return c.json({
+          err: errMsg,
+        }, 400);
+      }
+    });
+
+    this.app.post('/api/labels/:identifier/start', async (c) => {
+      const identifier = c.req.param('identifier');
+
+      try {
+        const containerIds = await docker.startContainersByLabel(identifier);
+
+        const res = {
+          title: webhookTitle(WebhookEventType.WEBHOOK),
+          identifier,
+          msg: `Started ${containerIds.length} container(s) labelled gitainer.identifier=${identifier}`,
+          containerIds,
+        };
+
+        if (this.gitainer.postWebhook) {
+          await fetch(this.gitainer.postWebhook, {
+            body: JSON.stringify(res),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          }).catch(err => console.error(err));
+        }
+
+        return c.json(res);
+      } catch (e) {
+        const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+        console.error(errMsg);
+        return c.json({
+          err: errMsg,
+        }, 400);
+      }
+    });
+
     this.app.all('/api/*', (c) => {
       return c.json({
         err: "Unknown API",

@@ -6,17 +6,20 @@ import { stream } from 'hono/streaming';
 import { $, serve, ShellError } from "bun";
 import type { GitainerServer } from "../git/GitainerServer";
 import { WebhookEventType, webhookTitle } from "./WebhookEventType";
+import { parseNamedCommands } from "../docker/DockerClient";
 
 export class WebhookServer {
   readonly app: Hono;
   readonly docker: DockerClient;
   readonly bareRepo: GitConsumer;
   readonly gitainer: GitainerServer;
+  readonly namedCommands: Record<string, string>;
 
   constructor(docker: DockerClient, bareRepo: GitConsumer, gitainer: GitainerServer) {
     this.docker = docker;
     this.bareRepo = bareRepo;
     this.gitainer = gitainer;
+    this.namedCommands = process.env.GITAINER_COMMANDS ? parseNamedCommands(process.env.GITAINER_COMMANDS) : {};
     this.app = new Hono();
 
     this.app.use(prettyJSON());
@@ -177,6 +180,83 @@ export class WebhookServer {
           identifier,
           msg: `Started ${containerIds.length} container(s) labelled gitainer.identifier=${identifier}`,
           containerIds,
+        };
+
+        if (this.gitainer.postWebhook) {
+          await fetch(this.gitainer.postWebhook, {
+            body: JSON.stringify(res),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          }).catch(err => console.error(err));
+        }
+
+        return c.json(res);
+      } catch (e) {
+        const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+        console.error(errMsg);
+        return c.json({
+          err: errMsg,
+        }, 400);
+      }
+    });
+
+    // run `registry garbage-collect` inside a running Docker Registry container
+    this.app.post('/api/registry/:containerName/cleanup', async (c) => {
+      const containerName = c.req.param('containerName');
+      const deleteUntagged = c.req.query('deleteUntagged') === 'true';
+      const configPath = c.req.query('configPath');
+
+      try {
+        const output = await docker.registryGarbageCollect(containerName, deleteUntagged, configPath);
+
+        const res = {
+          title: webhookTitle(WebhookEventType.WEBHOOK),
+          containerName,
+          msg: `Ran registry garbage-collect on ${containerName}`,
+          output,
+        };
+
+        if (this.gitainer.postWebhook) {
+          await fetch(this.gitainer.postWebhook, {
+            body: JSON.stringify(res),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          }).catch(err => console.error(err));
+        }
+
+        return c.json(res);
+      } catch (e) {
+        const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+        console.error(errMsg);
+        return c.json({
+          err: errMsg,
+        }, 400);
+      }
+    });
+
+    // run a named `docker exec` command configured via GITAINER_COMMANDS
+    this.app.post('/api/commands/:name', async (c) => {
+      const name = c.req.param('name');
+      const cmd = this.namedCommands[name];
+
+      if (!cmd) {
+        return c.json({
+          err: `Unknown command "${name}"`,
+        }, 404);
+      }
+
+      try {
+        const output = await docker.runCommand(cmd);
+
+        const res = {
+          title: webhookTitle(WebhookEventType.WEBHOOK),
+          name,
+          msg: `Ran command "${name}"`,
+          output,
         };
 
         if (this.gitainer.postWebhook) {

@@ -139,6 +139,31 @@ services:
       gitainer.identifier: myapp
 ```
 
+**Registry cleanup** (`POST /api/registry/:containerName/cleanup`, `title: "Gitainer: Webhook"`) runs `registry garbage-collect` inside a running Docker Registry ([distribution/distribution](https://hub.docker.com/_/registry)) container via `docker exec`, reclaiming blob storage from deleted/untagged manifests. Only fires the webhook on success — a docker error responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`:
+```json
+{
+  "title": "Gitainer: Webhook",
+  "containerName": "registry",
+  "msg": "Ran registry garbage-collect on registry",
+  "output": "..."
+}
+```
+Query params: `?deleteUntagged=true` adds registry's `-m` flag (also delete manifests with no tags); `?configPath=...` overrides the config file path inside the container (default `/etc/docker/registry/config.yml`).
+
+**Named commands** (`POST /api/commands/:name`, `title: "Gitainer: Webhook"`) run an operator-defined `docker exec ...` command via `GITAINER_COMMANDS`, a JSON object mapping a name to a command string. Only `docker exec` commands are accepted (not arbitrary shell) - Gitainer validates every command at startup and refuses to start if one doesn't start with `docker exec`. Unknown name returns a 404. Only fires the webhook on success - a docker error responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`:
+```json
+{
+  "title": "Gitainer: Webhook",
+  "name": "registry-gc",
+  "msg": "Ran command \"registry-gc\"",
+  "output": "..."
+}
+```
+```
+GITAINER_COMMANDS={"registry-gc":"docker exec registry registry garbage-collect /etc/docker/registry/config.yml"}
+```
+The built-in `/api/registry/:containerName/cleanup` endpoint above covers the common registry-cleanup case with a typed response; `GITAINER_COMMANDS` is the escape hatch for anything else you want exposed as an API call.
+
 #### Example: forwarding to Apprise
 
 [Apprise API](https://github.com/caronc/apprise-api) is a self-hosted REST front-end for [Apprise](https://github.com/caronc/apprise) that fans a single webhook out to Discord, Telegram, ntfy, Slack, and dozens of other notification services. Point `POST_WEBHOOK` at its `/notify/<tag>` endpoint and remap Gitainer's `msg`/`err` fields onto Apprise's `body` field:

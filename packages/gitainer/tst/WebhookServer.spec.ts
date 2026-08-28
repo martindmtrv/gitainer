@@ -159,3 +159,136 @@ describe("WebhookServer bulk stop/start by label", () => {
     expect(body).toEqual({ err: "docker daemon unreachable" });
   });
 });
+
+describe("WebhookServer registry cleanup", () => {
+  const mockBareRepo = {} as any;
+  const mockGitainer = {
+    postWebhook: undefined
+  } as any;
+
+  test("POST /api/registry/:containerName/cleanup runs garbage-collect", async () => {
+    const mockDocker = {
+      registryGarbageCollect: async (containerName: string, deleteUntagged: boolean, configPath?: string) => {
+        expect(containerName).toBe("registry");
+        expect(deleteUntagged).toBe(false);
+        expect(configPath).toBeUndefined();
+        return "blob eligible for deletion: ...";
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/registry/registry/cleanup", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      title: "Gitainer: Webhook",
+      containerName: "registry",
+      msg: "Ran registry garbage-collect on registry",
+      output: "blob eligible for deletion: ...",
+    });
+  });
+
+  test("POST /api/registry/:containerName/cleanup?deleteUntagged=true forwards flag", async () => {
+    const mockDocker = {
+      registryGarbageCollect: async (containerName: string, deleteUntagged: boolean) => {
+        expect(deleteUntagged).toBe(true);
+        return "";
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/registry/registry/cleanup?deleteUntagged=true", { method: "POST" });
+    expect(res.status).toBe(200);
+  });
+
+  test("POST /api/registry/:containerName/cleanup returns 400 on docker error", async () => {
+    const mockDocker = {
+      registryGarbageCollect: async () => {
+        throw new Error("container not found");
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/registry/registry/cleanup", { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body).toEqual({ err: "container not found" });
+  });
+});
+
+describe("WebhookServer named commands", () => {
+  const mockBareRepo = {} as any;
+  const mockGitainer = {
+    postWebhook: undefined
+  } as any;
+
+  afterEach(() => {
+    delete process.env.GITAINER_COMMANDS;
+  });
+
+  test("POST /api/commands/:name runs the configured docker exec command", async () => {
+    process.env.GITAINER_COMMANDS = JSON.stringify({
+      "registry-gc": "docker exec registry registry garbage-collect /etc/docker/registry/config.yml",
+    });
+    const mockDocker = {
+      runCommand: async (cmd: string) => {
+        expect(cmd).toBe("docker exec registry registry garbage-collect /etc/docker/registry/config.yml");
+        return "gc output";
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/commands/registry-gc", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      title: "Gitainer: Webhook",
+      name: "registry-gc",
+      msg: 'Ran command "registry-gc"',
+      output: "gc output",
+    });
+  });
+
+  test("POST /api/commands/:name returns 404 for unknown command", async () => {
+    const mockDocker = {} as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/commands/nope", { method: "POST" });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body).toEqual({ err: 'Unknown command "nope"' });
+  });
+
+  test("POST /api/commands/:name returns 400 on docker error", async () => {
+    process.env.GITAINER_COMMANDS = JSON.stringify({ boom: "docker exec c echo hi" });
+    const mockDocker = {
+      runCommand: async () => {
+        throw new Error("exec failed");
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/commands/boom", { method: "POST" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body).toEqual({ err: "exec failed" });
+  });
+
+  test("constructor throws when GITAINER_COMMANDS has a non docker-exec command", () => {
+    process.env.GITAINER_COMMANDS = JSON.stringify({ bad: "rm -rf /" });
+    const mockDocker = {} as any;
+
+    expect(() => new WebhookServer(mockDocker, mockBareRepo, mockGitainer)).toThrow(
+      'GITAINER_COMMANDS["bad"] must start with "docker exec"'
+    );
+  });
+
+  test("constructor throws when GITAINER_COMMANDS is not valid JSON", () => {
+    process.env.GITAINER_COMMANDS = "not json";
+    const mockDocker = {} as any;
+
+    expect(() => new WebhookServer(mockDocker, mockBareRepo, mockGitainer)).toThrow(
+      "GITAINER_COMMANDS is not valid JSON"
+    );
+  });
+});

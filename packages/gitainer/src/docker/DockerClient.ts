@@ -76,6 +76,38 @@ export function parseCommandString(cmd: string): string[] {
   });
 }
 
+/**
+ * Parses the `GITAINER_COMMANDS` env var: a JSON object mapping a name (used as
+ * `/api/commands/:name`) to a `docker exec ...` command string. Restricted to `docker exec`
+ * (rather than arbitrary shell) to bound what an operator can wire up through env config -
+ * same blast radius as the raw docker API gated behind ENABLE_RAW_API, not a general shell.
+ */
+export function parseNamedCommands(raw: string): Record<string, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`GITAINER_COMMANDS is not valid JSON: ${(e as Error).message}`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("GITAINER_COMMANDS must be a JSON object of name -> command string");
+  }
+
+  const commands = parsed as Record<string, unknown>;
+  for (const [name, cmd] of Object.entries(commands)) {
+    if (typeof cmd !== "string") {
+      throw new Error(`GITAINER_COMMANDS["${name}"] must be a string`);
+    }
+    const args = parseCommandString(cmd);
+    if (args[0] !== "docker" || args[1] !== "exec") {
+      throw new Error(`GITAINER_COMMANDS["${name}"] must start with "docker exec"`);
+    }
+  }
+
+  return commands as Record<string, string>;
+}
+
 export class DockerClient {
   private composeStringToTmp(composeString: string): string {
     const fileName = `/tmp/gitainer/${randomUUID()}.yaml`;
@@ -219,6 +251,24 @@ export class DockerClient {
       await $`docker start ${ids}`;
     }
     return ids;
+  }
+
+  /**
+   * Runs `registry garbage-collect` inside a running Docker Registry (distribution/distribution)
+   * container via `docker exec`, so registry blob storage reclaims space from deleted/untagged
+   * manifests. `configPath` must match the registry's own config file path inside the container
+   * (default matches the official `registry` image).
+   */
+  async registryGarbageCollect(containerName: string, deleteUntagged: boolean, configPath: string = "/etc/docker/registry/config.yml"): Promise<string> {
+    const flags = deleteUntagged ? ["-m"] : [];
+    const output = await $`docker exec ${containerName} registry garbage-collect ${flags} ${configPath}`.text();
+    return output;
+  }
+
+  /** Runs a pre-validated `docker exec ...` command string (see parseNamedCommands). */
+  async runCommand(cmd: string): Promise<string> {
+    const args = parseCommandString(cmd);
+    return await $`${args}`.text();
   }
 
   async composeDown(composeString: string, stackName: string) {

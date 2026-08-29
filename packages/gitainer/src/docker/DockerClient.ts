@@ -191,8 +191,17 @@ export class DockerClient {
    * never touches the running container), so only the recreate is handed off to a detached
    * sibling container (launched via the docker socket, so it survives gitainer's own container
    * being replaced) - if pull() fails here, the running gitainer container is never touched.
+   *
+   * Split into a "prepare" phase (safe, in-process: validate, pull, hydrate, stage the sibling
+   * container) and a returned "trigger" closure that actually starts the sibling and thus the
+   * recreate. Callers that are mid-response to the git client that pushed this update (the only
+   * realistic caller) must call the trigger only *after* that response has been fully flushed:
+   * `docker start` here can end with gitainer's own container being replaced, which kills this
+   * process - if that happens while the git push's HTTP response is still in flight, the client
+   * sees a broken/aborted push even though the update went through. Deferring the trigger until
+   * after the response is sent avoids that race.
    */
-  async composeSelfUpdate(composeString: string, stackName: string): Promise<void> {
+  async prepareSelfUpdate(composeString: string, stackName: string): Promise<() => Promise<void>> {
     const config = extractRemoteHostConfig(composeString);
     if (config) {
       throw new Error(`Self-update stack "${stackName}" cannot use a remote host (#@) comment; gitainer can only self-update the host it is running on`);
@@ -224,7 +233,20 @@ export class DockerClient {
     // executes; `--rm` still auto-removes the container once it exits, same as before.
     await $`docker create --rm --name ${containerName} -v /var/run/docker.sock:/var/run/docker.sock ${envForwarding} -e STACK_NAME="${stackName}" ${helperImage} sh -c "${selfUpdateScript}"`;
     await $`docker cp ${hydratedFilename} ${containerName}:/self-update.yaml`;
-    await $`docker start ${containerName}`;
+
+    return async () => {
+      await $`docker start ${containerName}`;
+    };
+  }
+
+  /**
+   * Convenience wrapper around prepareSelfUpdate() that triggers immediately - used directly
+   * by callers that aren't mid-response to the client that initiated the update (e.g. tests).
+   * GitainerServer's git-push path calls prepareSelfUpdate() itself so it can defer the trigger.
+   */
+  async composeSelfUpdate(composeString: string, stackName: string): Promise<void> {
+    const trigger = await this.prepareSelfUpdate(composeString, stackName);
+    await trigger();
   }
 
   /**

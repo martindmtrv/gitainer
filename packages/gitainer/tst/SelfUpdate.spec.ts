@@ -211,6 +211,79 @@ test("push self-stack: routes to composeSelfUpdate and protects it from DELETE",
   }
 }, { timeout: 100_000 });
 
+test("self-update: the recreate trigger is deferred past the push response, and pushes stay locked out until it runs", async () => {
+  const { testRoot, port, gitainer, postHelper, cleanup } = getTestSetup("selfstack");
+
+  try {
+    await gitainer.initRepo();
+
+    // Stub out the actual container recreate so this test exercises the deferral/locking
+    // behavior in GitainerServer, not real docker/compose - and so we can hold the trigger
+    // open on demand to observe the lock while it's "in flight".
+    let triggerInvoked = false;
+    let releaseTrigger!: () => void;
+    const triggerGate = new Promise<void>(resolve => { releaseTrigger = resolve; });
+    (gitainer.docker as any).prepareSelfUpdate = async (_compose: string, _stackName: string) => {
+      return async () => {
+        triggerInvoked = true;
+        await triggerGate;
+      };
+    };
+
+    gitainer.listen(port);
+    await cloneAndConfigRepo(testRoot, port);
+
+    const stackRoot = testRoot + "/client/docker/stacks/selfstack";
+    mkdirSync(stackRoot, { recursive: true });
+    await $`cp ${TEST_COMPOSE_ROOT}/self-stack-compose.yaml ${stackRoot}/docker-compose.yaml`;
+
+    const postPromise = new Promise((resolve, reject) => {
+      postHelper.callback = (body) => {
+        if (body.msg?.startsWith("Synthesis succeeded for 1 stack(s)")) {
+          resolve(null);
+        } else {
+          reject(body);
+        }
+      }
+    });
+
+    // The push itself must complete successfully - and, per the fix, must be able to complete
+    // even though the (stubbed) recreate hasn't run yet.
+    await $`git add . && git commit -m "add self stack" && git push`.cwd(testRoot + "/client/docker");
+    await postPromise;
+
+    // The webhook (sent from inside synthesisTime, before the trigger is deferred) fires
+    // before the trigger runs, so by the time we get here the trigger may not have been
+    // invoked yet - wait for Node's 'finish'/'close' handling in GitainerServer to reach it.
+    await waitFor(async () => {
+      if (!triggerInvoked) throw new Error("self-update trigger has not been invoked yet");
+    });
+
+    // The trigger is invoked but gated open (simulating the recreate still running) - the
+    // push lock must still be held so a concurrent push can't race the recreate.
+    expect((gitainer as any).synthesisRunning).toBe(true);
+
+    let secondPushFailed = false;
+    try {
+      await $`git commit --allow-empty -m "second push while locked" && git push`.cwd(testRoot + "/client/docker");
+    } catch (e) {
+      secondPushFailed = true;
+    }
+    expect(secondPushFailed).toBe(true);
+
+    // Let the (stubbed) recreate finish - the lock must be released once it does.
+    releaseTrigger();
+    await waitFor(async () => {
+      if ((gitainer as any).synthesisRunning) throw new Error("push lock was not released after the trigger completed");
+    });
+
+    // The previously-rejected commit is still queued locally - pushing it now must succeed.
+    await $`git push`.cwd(testRoot + "/client/docker");
+  } finally {
+    await cleanup();
+  }
+}, { timeout: 30_000 });
+
 test("push with both a normal stack and the self-stack: self-stack is processed last but both succeed", async () => {
   const { testRoot, port, gitainer, postHelper, cleanup } = getTestSetup("selfstack");
 

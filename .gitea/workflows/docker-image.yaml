@@ -24,3 +24,9 @@ jobs:
       image_name: ghcr.io/martindmtrv/gitainer
       file: packages/gitainer/Dockerfile
       platforms: linux/amd64,linux/arm64
+
+  deploy-gitainer:
+    needs: [build-publish-github]
+    uses: martin/chromart-gitea-actions/.gitea/workflows/gitainer-deploy.yaml@main
+    with:
+      stack_name: gitainer

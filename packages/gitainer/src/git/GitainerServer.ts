@@ -175,7 +175,10 @@ export class GitainerServer {
 
     const stacks = await this.bareRepo.listStacksWithEnvReference(modifiedEnvs);
     if (stacks.length > 0) {
-      await this.synthesisTime(false, WebhookEventType.ENV_UPDATE, stacks);
+      const { pendingSelfUpdateTriggers } = await this.synthesisTime(false, WebhookEventType.ENV_UPDATE, stacks);
+      for (const trigger of pendingSelfUpdateTriggers) {
+        await trigger();
+      }
     }
   }
 
@@ -230,6 +233,7 @@ export class GitainerServer {
       : allStackChanges;
     const successfullyProcessedStacks: { file: string, stackName: string, content: string }[] = [];
     const selfStackWarnings: string[] = [];
+    const pendingSelfUpdateTriggers: (() => Promise<void>)[] = [];
 
     try {
       if (combinedStackChanges.length == 0) {
@@ -256,7 +260,12 @@ export class GitainerServer {
           // We don't log the full compose file to the git client as it can be very long
           console.log(hydratedCompose);
 
-          await this.docker.composeSelfUpdate(hydratedCompose, stackName);
+          // Prepare (validate/pull/stage) now, but defer actually triggering the recreate: it
+          // can end with this very process being replaced, and doing that while the HTTP
+          // response for this push is still in flight would abort it client-side even though
+          // the update succeeded. The caller runs pendingSelfUpdateTriggers after the response
+          // is fully sent.
+          pendingSelfUpdateTriggers.push(await this.docker.prepareSelfUpdate(hydratedCompose, stackName));
           continue;
         }
 
@@ -375,7 +384,7 @@ export class GitainerServer {
     // push all the current stack files to a dir
     await this.bareRepo.writeAllStacksToDir(this.stacksPath);
 
-    return wasSuccessful;
+    return { wasSuccessful, pendingSelfUpdateTriggers };
   }
 
   async listen(port: number) {
@@ -403,11 +412,45 @@ done
           try {
             // update process env on synthesis
             await updateProcessEnv();
-            await this.synthesisTime(true, WebhookEventType.GIT_PUSH, undefined, (msg) => {
+            const { pendingSelfUpdateTriggers } = await this.synthesisTime(true, WebhookEventType.GIT_PUSH, undefined, (msg) => {
               res.write(msg + "\n");
             }, oldrev);
-            this.synthesisRunning = false;
-            res.end();
+
+            if (pendingSelfUpdateTriggers.length > 0) {
+              // Keep rejecting pushes until the self-update has actually been triggered, so a
+              // push arriving before then can't race the recreate (e.g. get synthesized
+              // against a container that's about to be replaced out from under it).
+              //
+              // Wait for Node's 'finish' event (this response's bytes have actually been
+              // handed to the OS socket) rather than a blind delay - it's the closest signal
+              // available, from inside this process, that the post-receive hook's curl (and
+              // thus `git receive-pack` reporting success) has what it needs, before the
+              // recreate potentially kills this very process - see prepareSelfUpdate() for why
+              // this can't just run inline before res.end(). 'close' is a fallback in case the
+              // connection drops before 'finish' fires, so this can't hang forever.
+              let fired = false;
+              const runTriggers = () => {
+                if (fired) return;
+                fired = true;
+                Promise.allSettled(pendingSelfUpdateTriggers.map(trigger => trigger()))
+                  .then(results => {
+                    for (const result of results) {
+                      if (result.status === "rejected") {
+                        console.error("Self-update trigger failed:", result.reason);
+                      }
+                    }
+                  })
+                  .finally(() => {
+                    this.synthesisRunning = false;
+                  });
+              };
+              res.once("finish", runTriggers);
+              res.once("close", runTriggers);
+              res.end();
+            } else {
+              res.end();
+              this.synthesisRunning = false;
+            }
           } catch (e) {
             res.statusCode = 500;
             res.end(String(e));

@@ -95,16 +95,51 @@ export class WebhookServer {
 
       console.log(`== stack update from POST webhook -> ${stackName} ==`);
 
-      try {
-        const isSelfStack = this.gitainer.isSelfStack(stackName);
-        let outputText: string;
-        if (isSelfStack) {
-          await docker.composeSelfUpdate(stackFile, stackName);
-          outputText = "self-update handed off to a detached helper container";
-        } else {
+      const isSelfStack = this.gitainer.isSelfStack(stackName);
+
+      if (!isSelfStack) {
+        try {
           const output = await docker.composeUpdate(stackFile, stackName);
-          outputText = output.text();
+          const outputText = output.text();
+
+          const res = {
+            title: webhookTitle(WebhookEventType.WEBHOOK),
+            stackName,
+            msg: `Successfully updated stack ${stackName}: ${outputText}`,
+            output: outputText,
+          };
+
+          if (this.gitainer.postWebhook) {
+            console.log(`== Sending POST to ${this.gitainer.postWebhook} ==`);
+            await fetch(this.gitainer.postWebhook, {
+              body: JSON.stringify(res),
+              headers: {
+                "Content-Type": "application/json",
+              },
+              method: "POST",
+            }).catch(err => console.error(err));
+            console.log("== Sent webhook notification ==");
+          }
+
+          return c.json(res);
+        } catch (e) {
+          const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+          console.error(errMsg);
+          return c.json({
+            err: errMsg,
+          }, 400);
         }
+      }
+
+      // Self-stack: the recreate can replace gitainer's own container, which kills this
+      // process. If that happens before this webhook's HTTP response has been flushed to the
+      // client, the caller sees a broken/aborted request even though the update succeeded -
+      // the same race fixed for the git-push path in GitainerServer. So prepare (validate/
+      // pull/stage) now, but only trigger the actual recreate once the response body has been
+      // written out to the client's socket.
+      try {
+        const trigger = await docker.prepareSelfUpdate(stackFile, stackName);
+        const outputText = "self-update handed off to a detached helper container";
 
         const res = {
           title: webhookTitle(WebhookEventType.WEBHOOK),
@@ -125,7 +160,16 @@ export class WebhookServer {
           console.log("== Sent webhook notification ==");
         }
 
-        return c.json(res);
+        c.header("Content-Type", "application/json");
+        return stream(c, async (streamApi) => {
+          await streamApi.write(JSON.stringify(res));
+          await streamApi.close();
+          try {
+            await trigger();
+          } catch (e) {
+            console.error("Self-update trigger failed:", e);
+          }
+        });
       } catch (e) {
         const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
         console.error(errMsg);

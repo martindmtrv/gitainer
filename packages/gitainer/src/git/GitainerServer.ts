@@ -23,6 +23,14 @@ export class GitainerServer {
 
   static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
 
+  // for renames, `file` may no longer match the stack pattern (e.g. renamed to keep for
+  // historical purposes while tearing the stack down), so fall back to `oldFile`
+  static resolveStackName(change: GitChange): string | undefined {
+    const match = GitainerServer.stackPattern.exec(change.file)
+      || (change.oldFile ? GitainerServer.stackPattern.exec(change.oldFile) : null);
+    return match?.[1];
+  }
+
   bareRepo!: GitConsumer;
 
   private synthesisRunning: boolean = false;
@@ -210,7 +218,8 @@ export class GitainerServer {
       .filter(change =>
         ([GitChangeType.ADD, GitChangeType.MODIFY, GitChangeType.RENAME, GitChangeType.DELETE].includes(change.type) ||
           change.type.toString().startsWith("R")) &&
-        GitainerServer.stackPattern.test(change.file)
+        (GitainerServer.stackPattern.test(change.file) ||
+          (change.oldFile !== undefined && GitainerServer.stackPattern.test(change.oldFile)))
       );
 
     // deduplicate based on file
@@ -227,8 +236,8 @@ export class GitainerServer {
     // reversible update+rollback before the irreversible self-update is triggered
     const combinedStackChanges = this.selfStackName
       ? [
-          ...allStackChanges.filter(change => !this.isSelfStack((GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1])),
-          ...allStackChanges.filter(change => this.isSelfStack((GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1])),
+          ...allStackChanges.filter(change => !this.isSelfStack(GitainerServer.resolveStackName(change) as string)),
+          ...allStackChanges.filter(change => this.isSelfStack(GitainerServer.resolveStackName(change) as string)),
         ]
       : allStackChanges;
     const successfullyProcessedStacks: { file: string, stackName: string, content: string }[] = [];
@@ -243,12 +252,18 @@ export class GitainerServer {
       // apply each stack change
       for (const change of combinedStackChanges) {
         currentStack = change.file;
-        const stackName = (GitainerServer.stackPattern.exec(change.file) as RegExpExecArray)[1];
+        const isRename = change.type.toString().startsWith("R");
+        const newStackName = GitainerServer.stackPattern.exec(change.file)?.[1];
+        const oldStackName = change.oldFile ? GitainerServer.stackPattern.exec(change.oldFile)?.[1] : undefined;
+        const stackName = (newStackName ?? oldStackName) as string;
+        // a rename that moves the compose file out of the stack pattern (e.g. renamed to keep
+        // it in the repo for historical purposes) should only tear the stack down, not re-deploy it
+        const renamedOutOfStack = isRename && !newStackName && !!oldStackName;
         log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
 
         if (this.isSelfStack(stackName)) {
-          if (change.type === GitChangeType.DELETE) {
-            const warning = `Refusing to delete self-stack "${stackName}": the running gitainer container was left untouched. Remove it manually via docker if this was intentional.`;
+          if (change.type === GitChangeType.DELETE || renamedOutOfStack) {
+            const warning = `Refusing to ${renamedOutOfStack ? 'tear down' : 'delete'} self-stack "${stackName}": the running gitainer container was left untouched. Remove it manually via docker if this was intentional.`;
             log(warning);
             selfStackWarnings.push(warning);
             continue;
@@ -269,14 +284,16 @@ export class GitainerServer {
           continue;
         }
 
-        if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || change.type.toString().startsWith("R")) {
+        if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || isRename) {
           const cleanUpTarget = (oldrev && !/^0+$/.test(oldrev)) ? oldrev : "HEAD^";
           const oldContent = await this.bareRepo.getStack(stackName, cleanUpTarget);
           if (oldContent) {
             log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
             await this.docker.composeDown(oldContent, stackName);
           }
-          if (change.type === GitChangeType.DELETE) {
+          // renaming a compose file to no longer match the stack pattern (e.g. prefixing it to
+          // keep it around for historical purposes) tears the stack down without redeploying it
+          if (change.type === GitChangeType.DELETE || renamedOutOfStack) {
             continue;
           }
         }

@@ -98,10 +98,13 @@ export class GitConsumer {
       .split("\n")
       .slice(1, -1)
       .map(entry => {
-        const file = entry.split("\t");
+        const parts = entry.split("\t");
+        const type = parts[0] as GitChangeType;
+        const isRename = type.toString().startsWith("R");
         return {
-          file: file[1],
-          type: file[0] as GitChangeType,
+          file: isRename ? parts[2] : parts[1],
+          ...(isRename ? { oldFile: parts[1] } : {}),
+          type,
           reason,
         };
       });
@@ -119,9 +122,12 @@ export class GitConsumer {
       .filter(line => line.trim())
       .map(entry => {
         const parts = entry.split("\t");
+        const type = parts[0] as GitChangeType;
+        const isRename = type.toString().startsWith("R");
         return {
-          file: parts[1],
-          type: parts[0] as GitChangeType,
+          file: isRename ? parts[2] : parts[1],
+          ...(isRename ? { oldFile: parts[1] } : {}),
+          type,
           reason: `Change between ${from} and ${to}`,
         };
       });

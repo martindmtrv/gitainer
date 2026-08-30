@@ -418,6 +418,63 @@ test("delete stack: push deletion -> stack is downed", async () => {
 
 }, { timeout: 100_000 });
 
+test("rename stack out of pattern: push rename -> stack is downed, no crash", async () => {
+  await cloneAndConfigRepo();
+  const stackRoot = TEST_ROOT + "/client/docker/stacks/renameme";
+  mkdirSync(stackRoot, { recursive: true });
+
+  const compose = `services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: renameme-app
+    stop_grace_period: 0s`;
+  await $`echo "${compose}" > ${stackRoot}/docker-compose.yaml`;
+
+  // Setup waiter for deploy
+  let postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Push to deploy
+  await $`git add . && git commit -m "add stack to rename" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify it's running
+  await $`docker inspect renameme-app`.quiet();
+
+  // Setup waiter for the rename-driven teardown
+  postPromise = new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.msg && body.msg.includes("Synthesis succeeded") && !body.err) {
+        setTimeout(() => resolve(null), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+
+  // Rename the compose file out of the stack pattern (keep it for historical purposes) and push
+  await $`git mv docker-compose.yaml NODEPLOYdocker-compose.yaml`.cwd(stackRoot);
+  await $`git add . && git commit -m "deprecate stack" && git push`.cwd(TEST_ROOT + "/client/docker");
+  await postPromise;
+
+  // Verify it's gone
+  try {
+    await $`docker inspect renameme-app`.quiet();
+    throw new Error("Container should have been deleted");
+  } catch (e) {
+    // success: container not found
+  }
+
+}, { timeout: 100_000 });
+
 test("modify stack: remove service -> removed service container is cleaned up", async () => {
   await cloneAndConfigRepo();
   const stackRoot = TEST_ROOT + "/client/docker/stacks/cleanup-test";

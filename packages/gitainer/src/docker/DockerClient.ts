@@ -293,6 +293,29 @@ export class DockerClient {
     return await $`${args}`.text();
   }
 
+  /**
+   * Pulls images for a compose file without touching running containers. Used to pull the
+   * new stack definition's images before the old stack is torn down, so a same-image update
+   * has no pull-induced downtime between down() and up().
+   */
+  async composePull(composeString: string, stackName: string) {
+    const config = extractRemoteHostConfig(composeString);
+    const cmdEnv = config ? {
+      ...process.env,
+      DOCKER_HOST: config.dockerHost,
+      ...(config.composeProjectDir ? { COMPOSE_PROJECT_DIR: config.composeProjectDir } : {})
+    } : undefined;
+
+    const strippedCompose = this.stripPrefixEntrypoint(composeString);
+    const strippedFilename = this.composeStringToTmp(strippedCompose);
+
+    if (cmdEnv) {
+      await $`docker-compose -f ${strippedFilename} pull`.env(cmdEnv);
+    } else {
+      await $`docker-compose -f ${strippedFilename} pull`;
+    }
+  }
+
   async composeDown(composeString: string, stackName: string) {
     const strippedCompose = this.stripPrefixEntrypoint(composeString);
     const filename = this.composeStringToTmp(strippedCompose);

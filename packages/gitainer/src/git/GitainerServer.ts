@@ -287,18 +287,28 @@ export class GitainerServer {
         if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || isRename) {
           const cleanUpTarget = (oldrev && !/^0+$/.test(oldrev)) ? oldrev : "HEAD^";
           const oldContent = await this.bareRepo.getStack(stackName, cleanUpTarget);
+          // renaming a compose file to no longer match the stack pattern (e.g. prefixing it to
+          // keep it around for historical purposes) tears the stack down without redeploying it
+          const willRedeploy = change.type !== GitChangeType.DELETE && !renamedOutOfStack;
+
+          if (willRedeploy) {
+            hydratedCompose = await this.bareRepo.getStack(stackName) as string;
+            // pull the new stack's images before deconfiguring the old one, so a same-image
+            // update has no pull-induced downtime between down() and up()
+            log(`Pulling images for ${stackName} before deconfiguring previous stack`);
+            await this.docker.composePull(hydratedCompose, stackName);
+          }
+
           if (oldContent) {
             log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
             await this.docker.composeDown(oldContent, stackName);
           }
-          // renaming a compose file to no longer match the stack pattern (e.g. prefixing it to
-          // keep it around for historical purposes) tears the stack down without redeploying it
-          if (change.type === GitChangeType.DELETE || renamedOutOfStack) {
+          if (!willRedeploy) {
             continue;
           }
+        } else {
+          hydratedCompose = await this.bareRepo.getStack(stackName) as string;
         }
-
-        hydratedCompose = await this.bareRepo.getStack(stackName) as string;
 
         log(`<= ${change.file} =>`);
         // We don't log the full compose file to the git client as it can be very long

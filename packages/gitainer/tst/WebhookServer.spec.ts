@@ -99,6 +99,54 @@ describe("WebhookServer API Key Authentication", () => {
   });
 });
 
+describe("WebhookServer force stack update", () => {
+  const mockBareRepo = {
+    getStack: async (name: string) => {
+      if (name === "existing") {
+        return "version: '3'\nservices:\n  app:\n    image: nginx";
+      }
+      return null;
+    }
+  } as any;
+  const mockGitainer = {
+    postWebhook: undefined,
+    isSelfStack: () => false,
+  } as any;
+
+  test("POST /api/stacks/:stackName pulls images before tearing the stack down", async () => {
+    const calls: string[] = [];
+    const mockDocker = {
+      composePull: async (composeString: string, stackName: string) => {
+        calls.push(`composePull:${stackName}`);
+      },
+      composeDown: async (composeString: string, stackName: string) => {
+        calls.push(`composeDown:${stackName}`);
+      },
+      composeUpdate: async (composeString: string, stackName: string) => {
+        calls.push(`composeUpdate:${stackName}`);
+        return { text: () => "updated" };
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/existing", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      "composePull:existing",
+      "composeDown:existing",
+      "composeUpdate:existing",
+    ]);
+  });
+
+  test("POST /api/stacks/:stackName returns 404 for unknown stack", async () => {
+    const mockDocker = {} as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/nope", { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("WebhookServer bulk stop/start by label", () => {
   const mockBareRepo = {} as any;
   const mockGitainer = {

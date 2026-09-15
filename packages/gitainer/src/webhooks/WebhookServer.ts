@@ -99,6 +99,11 @@ export class WebhookServer {
 
       if (!isSelfStack) {
         try {
+          // pull images before tearing the stack down, so a forced reload has no
+          // pull-induced downtime between down() and up() - mirrors the git-push path
+          // in GitainerServer.
+          await docker.composePull(stackFile, stackName);
+          await docker.composeDown(stackFile, stackName);
           const output = await docker.composeUpdate(stackFile, stackName);
           const outputText = output.text();
 

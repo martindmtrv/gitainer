@@ -29,7 +29,7 @@ services:
       - 8080:8080 # webui and webhooks
     environment:
       # GITAINER_API_KEY: <optional API key to secure webhooks>
-      # STACK_UPDATE_ON_ENV_CHANGE: 1
+      # STACK_UPDATE_ON_ENV_CHANGE: 1 # 1/true/yes/on enables, anything else (incl. 0) disables
       # POST_WEBHOOK: <some POST endpoint>
       # GITAINER_SELF_STACK: <name of the stack that is gitainer's own deployment, see Self-Updating Gitainer>
       # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:27.1.2-alpine3.20

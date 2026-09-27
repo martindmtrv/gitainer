@@ -2,6 +2,7 @@ import { DockerClient } from '../docker/DockerClient';
 import { GitainerServer } from '../git/GitainerServer';
 import { WebhookServer } from "../webhooks/WebhookServer";
 import { updateProcessEnv } from "../infisical/InfisicalProvider";
+import { parseBooleanEnv } from "./envUtils";
 
 // load dynamic env from infisical
 await updateProcessEnv();
@@ -17,7 +18,7 @@ const gitainer = new GitainerServer(
   process.env.FRAGMENTS_PATH as string,
   process.env.STACKS_PATH as string,
   docker,
-  !!process.env.STACK_UPDATE_ON_ENV_CHANGE,
+  parseBooleanEnv(process.env.STACK_UPDATE_ON_ENV_CHANGE),
   process.env.POST_WEBHOOK as string,
   process.env.GITAINER_SELF_STACK,
 );

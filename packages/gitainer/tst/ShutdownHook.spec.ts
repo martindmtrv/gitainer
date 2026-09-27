@@ -96,14 +96,40 @@ test("composeDown fails with the hook error and leaves the stack running", async
   }
 }, { timeout: 60_000 });
 
+test("composeDown sends each hook command and its output to the logger", async () => {
+  const docker = new DockerClient();
+  const container = "shutdownhook-log";
+  const compose = stackCompose(container, `x-shutdown-hook:
+  - echo backing up
+  - echo warning >&2`);
+
+  await removeContainer(container);
+  try {
+    await docker.composeUpdate(compose, "shutdownhook-log");
+
+    const logs: string[] = [];
+    await docker.composeDown(compose, "shutdownhook-log", compose, msg => logs.push(msg));
+    expect(logs).toEqual([
+      "Running shutdown hook for shutdownhook-log: echo backing up",
+      "backing up",
+      "Running shutdown hook for shutdownhook-log: echo warning >&2",
+      "warning",
+    ]);
+  } finally {
+    await removeContainer(container);
+  }
+}, { timeout: 60_000 });
+
 test("runShutdownHook is skipped when the stack has no containers", async () => {
   const docker = new DockerClient();
   const out = tmpOutFile("skipped");
   const compose = stackCompose("shutdownhook-skipped", `x-shutdown-hook: echo ran >> ${out}; exit 1`);
 
   await removeContainer("shutdownhook-skipped");
-  await docker.runShutdownHook(compose, "shutdownhook-skipped");
+  const logs: string[] = [];
+  await docker.runShutdownHook(compose, "shutdownhook-skipped", undefined, msg => logs.push(msg));
   expect(() => readFileSync(out, "utf-8")).toThrow();
+  expect(logs).toEqual(["Skipping shutdown hook for shutdownhook-skipped: stack has no containers"]);
 });
 
 test("runShutdownHook passes the command environment to the hook", async () => {

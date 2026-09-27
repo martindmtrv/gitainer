@@ -348,9 +348,10 @@ export class DockerClient {
   /**
    * `hookCompose` is the compose file whose `x-shutdown-hook` runs before the down. Callers
    * replacing a stack pass the incoming version, so pushing a fixed hook unblocks a stack whose
-   * deployed hook is broken, rather than the deployed hook trapping it.
+   * deployed hook is broken, rather than the deployed hook trapping it. `log` receives the
+   * shutdown hook's progress and output, so a push can relay it to the git client.
    */
-  async composeDown(composeString: string, stackName: string, hookCompose: string = composeString) {
+  async composeDown(composeString: string, stackName: string, hookCompose: string = composeString, log: (msg: string) => void = console.log) {
     const strippedCompose = this.stripPrefixEntrypoint(composeString);
     const filename = this.composeStringToTmp(strippedCompose);
     const config = extractRemoteHostConfig(strippedCompose);
@@ -361,7 +362,7 @@ export class DockerClient {
     } : undefined;
 
     // throws (aborting the down) if any shutdown hook command exits non-zero
-    await this.runShutdownHook(hookCompose, stackName, cmdEnv);
+    await this.runShutdownHook(hookCompose, stackName, cmdEnv, log);
 
     if (cmdEnv) {
       return await $`docker-compose -f ${filename} -p ${stackName} down`.env(cmdEnv);
@@ -388,26 +389,33 @@ export class DockerClient {
    * compose commands, so `docker ...` in a hook targets the stack's (possibly remote) host.
    * Skipped when the stack has no containers, so a broken hook can't wedge a stack that isn't
    * running. Throws on the first command that exits non-zero, which aborts the down.
+   * Each command and its output go to `log`.
    */
-  async runShutdownHook(composeString: string, stackName: string, cmdEnv?: Record<string, string | undefined>) {
+  async runShutdownHook(composeString: string, stackName: string, cmdEnv?: Record<string, string | undefined>, log: (msg: string) => void = console.log) {
     const hookCmds = extractShutdownHook(composeString);
     if (hookCmds.length === 0) {
       return;
     }
 
     if (!await this.isStackDeployed(stackName, cmdEnv)) {
-      console.log(`Skipping shutdown hook for ${stackName}: stack has no containers`);
+      log(`Skipping shutdown hook for ${stackName}: stack has no containers`);
       return;
     }
 
     for (const cmd of hookCmds) {
-      console.log(`Running shutdown hook for ${stackName}: ${cmd}`);
+      log(`Running shutdown hook for ${stackName}: ${cmd}`);
+      // quiet() so the output isn't echoed to the server console on top of the log() below
       const result = cmdEnv
-        ? await $`sh -c ${cmd}`.env(cmdEnv).nothrow()
-        : await $`sh -c ${cmd}`.nothrow();
+        ? await $`sh -c ${cmd}`.env(cmdEnv).nothrow().quiet()
+        : await $`sh -c ${cmd}`.nothrow().quiet();
+
+      const stdout = result.stdout.toString().trim();
+      const stderr = result.stderr.toString().trim();
+      if (stdout) log(stdout);
+      if (stderr) log(stderr);
 
       if (result.exitCode !== 0) {
-        const output = result.stderr.toString().trim() || result.stdout.toString().trim();
+        const output = stderr || stdout;
         throw new Error(`Shutdown hook for stack "${stackName}" failed (exit code ${result.exitCode}): ${cmd}${output ? `\n${output}` : ''}`);
       }
     }

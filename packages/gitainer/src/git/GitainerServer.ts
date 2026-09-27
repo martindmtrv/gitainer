@@ -303,7 +303,7 @@ export class GitainerServer {
             log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
             // run the newest version's shutdown hook: the incoming one when redeploying, so a
             // push can fix a broken hook instead of being blocked by it
-            await this.docker.composeDown(oldContent, stackName, willRedeploy ? hydratedCompose : oldContent);
+            await this.docker.composeDown(oldContent, stackName, willRedeploy ? hydratedCompose : oldContent, log);
           }
           if (!willRedeploy) {
             continue;
@@ -367,7 +367,7 @@ export class GitainerServer {
         for (const stack of successfullyProcessedStacks) {
           try {
             log(`Rolling back (down) ${stack.stackName} with new content`);
-            await this.docker.composeDown(stack.content, stack.stackName);
+            await this.docker.composeDown(stack.content, stack.stackName, stack.content, log);
           } catch (rollbackError) {
             log(`Failed to down stack ${stack.stackName}: ${rollbackError}`);
           }

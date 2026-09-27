@@ -167,9 +167,7 @@ export class GitainerServer {
       // for some reason this diff command exits as an error
       const output = (e as ShellError).text();
       // console.log("diff exit code:", (e as ShellError).exitCode);
-      console.log("diff output:");
-      console.log(output);
-
+      // only log the keys, the diff lines contain values which may be secrets (e.g. from Infisical)
       modifiedEnvs = output
         .split("\n")
         .filter(env => env.includes("="))
@@ -187,6 +185,10 @@ export class GitainerServer {
       for (const trigger of pendingSelfUpdateTriggers) {
         await trigger();
       }
+    } else {
+      // nothing to synthesize, so record these envs as handled or the same diff is reported on every check
+      console.log("No stacks use the changed envs, updating lastSynthesizedEnv");
+      await $`cp ${this.gitainerDataPath}/tmpEnv ${this.gitainerDataPath}/lastSynthesizedEnv`;
     }
   }
 

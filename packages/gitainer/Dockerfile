@@ -38,7 +38,7 @@ LABEL org.opencontainers.image.source=https://github.com/martindmtrv/gitainer
 LABEL org.opencontainers.image.description="Simple Git-based container management platform for Docker Standalone"
 
 # setup go 
-RUN apk add --no-cache git make musl-dev go curl openssh-client
+RUN apk add --no-cache git make musl-dev go curl openssh-client sshpass
 
 # Configure SSH to skip host key checking for remote hosts
 RUN mkdir -p /etc/ssh && \

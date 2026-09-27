@@ -7,6 +7,7 @@ Simple Git-based container management platform for Docker Standalone
 - All the benefits of Git such as versioning, portability, etc.
 - Pass through Variables and YAML fragments to keep your stacks DRY
 - Prepend setup commands to containers via `prefix_entrypoint` without overriding original execution
+- Run a stack-level `x-shutdown-hook` (e.g. a backup) before a stack is taken down
 - Lightweight HTTP API to trigger stack actions from CI/CD pipelines
 - POST webhook option for update responses
 
@@ -467,6 +468,34 @@ services:
 ```
 
 Under the hood, Gitainer automatically pulls the image, inspects its embedded metadata (Entrypoint and Cmd), and generates a `/bin/sh -c` wrapper script using `exec "$@"` to pass the image's native execution arguments safely.
+
+### Shutdown Hook
+
+A stack can define a top-level `x-shutdown-hook` with commands to run right before Gitainer downs the stack, e.g. to take a backup or flush state. It accepts a single command string or a list of command strings:
+
+```yaml
+x-shutdown-hook:
+  - docker exec mydb pg_dump -U postgres -f /backups/pre-shutdown.sql
+  - curl -fsS -X POST https://api.webhooks.com/stack-stopping
+
+services:
+  mydb:
+    image: postgres
+    container_name: mydb
+```
+
+- Commands run in order with `sh -c` inside the Gitainer container, with the same environment as the compose commands. For a [remote host](#remote-docker-host) stack `DOCKER_HOST` is set, so `docker ...` commands target the remote host.
+- The hook runs whenever the stack is downed: when a stack is modified, deleted or renamed by a push, and on a forced reload through `POST /api/stacks/:stackName`.
+- The **newest** version of the hook always runs:
+  - **Modify or rename:** the hook from the version being pushed runs, not the one currently deployed. Adding a hook takes effect on the push that adds it, and pushing a fixed hook unblocks a stack whose deployed hook is broken.
+  - **Delete, or a rename out of the `stacks/<name>/` pattern:** there is no incoming version, so the hook from the last committed version runs. If that hook is broken, push a fix first, then delete.
+  - **`POST /api/stacks/:stackName`:** the hook from the current version in the repo runs.
+- If any command exits non-zero, the remaining commands are skipped, the stack is **not** downed, and the update fails with the command's output (a push is rejected and rolled back like any other synthesis failure).
+- The hook is skipped if the stack has no containers, so it never blocks deploying over a stack that isn't running. If a hook is broken on a running stack, push a fixed hook.
+- Not run for the [self-stack](#self-updating-gitainer), which is recreated by a helper container rather than downed.
+
+> [!NOTE]
+> On a modify, the new hook runs against the **old, still-running** stack, before any of the pushed changes are deployed. A hook that depends on something only the pushed version introduces, such as a container that was added or renamed, fails on that push because it doesn't exist yet. When a push adds or changes a hook along with such changes, make the hook work against the old stack as well, or tolerate what's missing (e.g. `docker exec new-db ... || true`).
 
 ## Motivation
 

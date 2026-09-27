@@ -66,6 +66,31 @@ export function extractRemoteHostConfig(composeString: string): RemoteHostConfig
   return undefined;
 }
 
+/**
+ * Reads the top-level `x-shutdown-hook` from a compose file. Compose ignores top-level `x-`
+ * extension fields, so the key doesn't need to be stripped before handing the file to compose.
+ */
+export function extractShutdownHook(composeString: string): string[] {
+  let parsed: any;
+  try {
+    parsed = jsyaml.load(composeString);
+  } catch (e) {
+    return [];
+  }
+
+  const hook = parsed && typeof parsed === 'object' ? parsed['x-shutdown-hook'] : undefined;
+  if (hook === undefined || hook === null) {
+    return [];
+  }
+  if (typeof hook === 'string') {
+    return [hook];
+  }
+  if (Array.isArray(hook) && hook.every(cmd => typeof cmd === 'string')) {
+    return hook;
+  }
+  throw new Error("x-shutdown-hook must be a command string or a list of command strings");
+}
+
 export function parseCommandString(cmd: string): string[] {
   const matches = cmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
   return matches.map(arg => {
@@ -126,6 +151,10 @@ export class DockerClient {
    * Compose update is -> down(), pull(), up()
    */
   async composeUpdate(composeString: string, stackName: string) {
+    // validate the shutdown hook up front, so a malformed one fails the deploy that introduced
+    // it rather than the later down() of this stack
+    extractShutdownHook(composeString);
+
     const config = extractRemoteHostConfig(composeString);
     const cmdEnv = config ? {
       ...process.env,
@@ -316,7 +345,12 @@ export class DockerClient {
     }
   }
 
-  async composeDown(composeString: string, stackName: string) {
+  /**
+   * `hookCompose` is the compose file whose `x-shutdown-hook` runs before the down. Callers
+   * replacing a stack pass the incoming version, so pushing a fixed hook unblocks a stack whose
+   * deployed hook is broken, rather than the deployed hook trapping it.
+   */
+  async composeDown(composeString: string, stackName: string, hookCompose: string = composeString) {
     const strippedCompose = this.stripPrefixEntrypoint(composeString);
     const filename = this.composeStringToTmp(strippedCompose);
     const config = extractRemoteHostConfig(strippedCompose);
@@ -326,10 +360,56 @@ export class DockerClient {
       ...(config.composeProjectDir ? { COMPOSE_PROJECT_DIR: config.composeProjectDir } : {})
     } : undefined;
 
+    // throws (aborting the down) if any shutdown hook command exits non-zero
+    await this.runShutdownHook(hookCompose, stackName, cmdEnv);
+
     if (cmdEnv) {
       return await $`docker-compose -f ${filename} -p ${stackName} down`.env(cmdEnv);
     } else {
       return await $`docker-compose -f ${filename} -p ${stackName} down`;
+    }
+  }
+
+  /**
+   * Whether the compose project has any containers (running or stopped) on the target host.
+   * Used to skip the shutdown hook for a stack that isn't actually deployed.
+   */
+  async isStackDeployed(stackName: string, cmdEnv?: Record<string, string | undefined>): Promise<boolean> {
+    const filter = `label=com.docker.compose.project=${stackName}`;
+    const output = cmdEnv
+      ? await $`docker ps -aq --filter ${filter}`.env(cmdEnv).text()
+      : await $`docker ps -aq --filter ${filter}`.text();
+    return output.trim().length > 0;
+  }
+
+  /**
+   * Runs the stack-level `x-shutdown-hook` (a command string or list of command strings) via
+   * `sh -c`, in order, before the stack is downed. Runs with the same environment as the
+   * compose commands, so `docker ...` in a hook targets the stack's (possibly remote) host.
+   * Skipped when the stack has no containers, so a broken hook can't wedge a stack that isn't
+   * running. Throws on the first command that exits non-zero, which aborts the down.
+   */
+  async runShutdownHook(composeString: string, stackName: string, cmdEnv?: Record<string, string | undefined>) {
+    const hookCmds = extractShutdownHook(composeString);
+    if (hookCmds.length === 0) {
+      return;
+    }
+
+    if (!await this.isStackDeployed(stackName, cmdEnv)) {
+      console.log(`Skipping shutdown hook for ${stackName}: stack has no containers`);
+      return;
+    }
+
+    for (const cmd of hookCmds) {
+      console.log(`Running shutdown hook for ${stackName}: ${cmd}`);
+      const result = cmdEnv
+        ? await $`sh -c ${cmd}`.env(cmdEnv).nothrow()
+        : await $`sh -c ${cmd}`.nothrow();
+
+      if (result.exitCode !== 0) {
+        const output = result.stderr.toString().trim() || result.stdout.toString().trim();
+        throw new Error(`Shutdown hook for stack "${stackName}" failed (exit code ${result.exitCode}): ${cmd}${output ? `\n${output}` : ''}`);
+      }
     }
   }
 

@@ -301,7 +301,9 @@ export class GitainerServer {
 
           if (oldContent) {
             log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
-            await this.docker.composeDown(oldContent, stackName);
+            // run the newest version's shutdown hook: the incoming one when redeploying, so a
+            // push can fix a broken hook instead of being blocked by it
+            await this.docker.composeDown(oldContent, stackName, willRedeploy ? hydratedCompose : oldContent);
           }
           if (!willRedeploy) {
             continue;

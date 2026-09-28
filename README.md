@@ -222,6 +222,14 @@ In addition to using environment variables, Gitainer also now supports Infisical
 
 Anytime variable changes are detected, any consuming services will be redeployed with the new value.
 
+#### Priority
+
+Infisical wins. Its secrets override any key of the same name in Gitainer's `environment:` or a mounted `.env`. The `.env` mount is meant as a cutover path for existing env files (see [Porting an external `.env` file](#porting-an-external-env-file)): once a variable is in Infisical, remove it from `.env`.
+
+#### Cache
+
+After each successful fetch, the secrets are written to `$GITAINER_DATA/infisicalCache.json` (readable only by its owner). If Infisical can't be reached (e.g. it sits behind a reverse proxy that is down), Gitainer applies the cached secrets with the same priority as a live fetch, so a restart or push during an outage still deploys stacks with their last known values instead of blank or `.env` ones. The file holds your secrets in plain text, so treat `$GITAINER_DATA` (and its backups) accordingly. Keys deleted from Infisical stay in the cache until the next successful fetch replaces it.
+
 To set this up, provide the following environment variables in your Gitainer deployment
 
 ```

@@ -2,6 +2,7 @@ import { simpleGit as Git, GitError, type SimpleGit } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import { GitainerServer } from './GitainerServer';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { referencesEnv } from '../server/envUtils';
 
 export class GitConsumer {
   readonly repo: SimpleGit;
@@ -172,10 +173,7 @@ export class GitConsumer {
     for (const file of promises) {
       const matches: string[] = [];
       envVars.forEach(envVar => {
-        if (
-          [`$${envVar}`, '${' + envVar + '}']
-            .some(envPattern => file.contents.includes(envPattern))
-        ) {
+        if (referencesEnv(file.contents, envVar)) {
           matches.push(envVar);
         }
       });

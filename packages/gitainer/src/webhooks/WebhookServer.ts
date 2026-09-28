@@ -104,7 +104,7 @@ export class WebhookServer {
           // in GitainerServer.
           await docker.composePull(stackFile, stackName);
           await docker.composeDown(stackFile, stackName);
-          const output = await docker.composeUpdate(stackFile, stackName);
+          const output = await docker.composeUpdate(stackFile, stackName, false);
           const outputText = output.text();
 
           const res = {

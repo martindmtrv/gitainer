@@ -7,7 +7,7 @@ import { NotifyWebhookTestHelper } from "./helper/NotifyWebhookTestHelper";
 
 let testCounter = 0;
 
-function getTestSetup() {
+function getTestSetup(selfStackName?: string) {
   testCounter++;
   const testId = `test_${testCounter}_${Date.now()}`;
   const testRoot = `./tst/resources_pulldown_${testId}`;
@@ -35,6 +35,7 @@ function getTestSetup() {
     docker,
     false,
     `http://localhost:${webhookPort}/gitainer`,
+    selfStackName,
   );
 
   const postHelper = new NotifyWebhookTestHelper("/gitainer", webhookPort);
@@ -63,6 +64,18 @@ async function cloneAndConfigRepo(testRoot: string, port: number) {
   await $`git config push.autoSetupRemote "true"`.cwd(testRoot + "/client/docker");
 }
 
+function waitForSynthesisFailure(postHelper: NotifyWebhookTestHelper) {
+  return new Promise((resolve, reject) => {
+    postHelper.callback = (body: any) => {
+      if (body.err) {
+        setTimeout(() => resolve(body), 1000);
+      } else {
+        setTimeout(() => reject(body), 1000);
+      }
+    }
+  });
+}
+
 function waitForSynthesisSuccess(postHelper: NotifyWebhookTestHelper) {
   return new Promise((resolve, reject) => {
     postHelper.callback = (body: any) => {
@@ -77,17 +90,25 @@ function waitForSynthesisSuccess(postHelper: NotifyWebhookTestHelper) {
 
 // Stubs docker.composePull/composeDown/composeUpdate on the given DockerClient so the
 // synthesis flow can be exercised (and its call ordering observed) without touching real
-// docker/compose. Returns the recorded call log, in invocation order.
-function stubDockerCalls(docker: DockerClient): { calls: string[] } {
+// docker/compose. Returns the recorded call log, in invocation order. composeUpdate is logged
+// with ":pull" when it would pull again itself. Pulls of stacks in `failPulls` throw.
+function stubDockerCalls(docker: DockerClient, failPulls: string[] = []): { calls: string[] } {
   const state = { calls: [] as string[] };
   (docker as any).composePull = async (composeString: string, stackName: string) => {
     state.calls.push(`composePull:${stackName}`);
+    if (failPulls.includes(stackName)) {
+      throw new Error(`pull access denied for ${stackName}`);
+    }
   };
   (docker as any).composeDown = async (composeString: string, stackName: string) => {
     state.calls.push(`composeDown:${stackName}`);
   };
-  (docker as any).composeUpdate = async (composeString: string, stackName: string) => {
-    state.calls.push(`composeUpdate:${stackName}`);
+  (docker as any).composeUpdate = async (composeString: string, stackName: string, pull: boolean = true) => {
+    state.calls.push(`composeUpdate:${stackName}${pull ? ":pull" : ""}`);
+  };
+  (docker as any).prepareSelfUpdate = async (composeString: string, stackName: string, pull: boolean = true) => {
+    state.calls.push(`prepareSelfUpdate:${stackName}${pull ? ":pull" : ""}`);
+    return async () => { state.calls.push(`selfUpdateTrigger:${stackName}`); };
   };
   return state;
 }
@@ -117,8 +138,8 @@ test("modify stack: pulls the new stack's images before deconfiguring the previo
     await $`git add . && git commit -m "add stack" && git push`.cwd(testRoot + "/client/docker");
     await postPromise;
 
-    // first deploy: nothing to tear down, so only composeUpdate should run
-    expect(calls).toEqual(["composeUpdate:pulldown-test"]);
+    // first deploy: nothing to tear down, and composeUpdate doesn't pull again
+    expect(calls).toEqual(["composePull:pulldown-test", "composeUpdate:pulldown-test"]);
     calls.length = 0;
 
     const composeV2 = `services:
@@ -136,7 +157,7 @@ test("modify stack: pulls the new stack's images before deconfiguring the previo
     await postPromise;
 
     // the new stack's images must be pulled before the previous stack is torn down, and
-    // composeUpdate (which pulls again before recreating) must still run afterwards
+    // composeUpdate must not pull again once the stack is down
     expect(calls).toEqual([
       "composePull:pulldown-test",
       "composeDown:pulldown-test",
@@ -177,6 +198,7 @@ test("modify stack: composePull is called with the new content, composeDown with
     let postPromise = waitForSynthesisSuccess(postHelper);
     await $`git add . && git commit -m "add stack" && git push`.cwd(testRoot + "/client/docker");
     await postPromise;
+    pulled.length = 0;
 
     const composeV2 = `services:
   app:
@@ -269,6 +291,133 @@ test("rename stack out of pattern: tears down without pulling", async () => {
     await postPromise;
 
     expect(calls).toEqual(["composeDown:pulldown-rename"]);
+  } finally {
+    await cleanup();
+  }
+}, { timeout: 100_000 });
+
+test("multiple stacks: pulls every stack's images before tearing any stack down", async () => {
+  const { testRoot, port, docker, gitainer, postHelper, cleanup } = getTestSetup();
+  try {
+    await gitainer.initRepo();
+    const { calls } = stubDockerCalls(docker);
+    gitainer.listen(port);
+    await cloneAndConfigRepo(testRoot, port);
+
+    const stacks = ["pullfirst-a", "pullfirst-b"];
+    const writeStacks = async (version: string) => {
+      for (const stack of stacks) {
+        mkdirSync(`${testRoot}/client/docker/stacks/${stack}`, { recursive: true });
+        await $`echo ${`services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: ${stack}-app
+    labels:
+      test.version: ${version}`} > ${testRoot}/client/docker/stacks/${stack}/docker-compose.yaml`;
+      }
+    };
+
+    await writeStacks("v1");
+    let postPromise = waitForSynthesisSuccess(postHelper);
+    await $`git add . && git commit -m "add stacks" && git push`.cwd(testRoot + "/client/docker");
+    await postPromise;
+    calls.length = 0;
+
+    await writeStacks("v2");
+    postPromise = waitForSynthesisSuccess(postHelper);
+    await $`git add . && git commit -m "update stacks" && git push`.cwd(testRoot + "/client/docker");
+    await postPromise;
+
+    expect(calls.slice(0, 2).sort()).toEqual(["composePull:pullfirst-a", "composePull:pullfirst-b"]);
+    expect(calls.slice(2).filter(call => call.startsWith("composePull"))).toEqual([]);
+    expect(calls.slice(2).sort()).toEqual([
+      "composeDown:pullfirst-a",
+      "composeDown:pullfirst-b",
+      "composeUpdate:pullfirst-a",
+      "composeUpdate:pullfirst-b",
+    ]);
+  } finally {
+    await cleanup();
+  }
+}, { timeout: 100_000 });
+
+test("multiple stacks: a failed pull fails the synthesis before any stack is touched", async () => {
+  const { testRoot, port, docker, gitainer, postHelper, cleanup } = getTestSetup();
+  try {
+    await gitainer.initRepo();
+    const { calls } = stubDockerCalls(docker, ["pullfail-typo"]);
+    gitainer.listen(port);
+    await cloneAndConfigRepo(testRoot, port);
+
+    for (const stack of ["pullfail-ok", "pullfail-typo"]) {
+      mkdirSync(`${testRoot}/client/docker/stacks/${stack}`, { recursive: true });
+      await $`echo ${`services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: ${stack}-app`} > ${testRoot}/client/docker/stacks/${stack}/docker-compose.yaml`;
+    }
+
+    const postPromise = waitForSynthesisFailure(postHelper);
+    await $`git add . && git commit -m "add stacks" && git push`.cwd(testRoot + "/client/docker").nothrow();
+    await postPromise;
+
+    expect(calls.filter(call => !call.startsWith("composePull"))).toEqual([]);
+  } finally {
+    await cleanup();
+  }
+}, { timeout: 100_000 });
+
+async function writeSelfStackTest(testRoot: string, stacks: string[]) {
+  for (const stack of stacks) {
+    mkdirSync(`${testRoot}/client/docker/stacks/${stack}`, { recursive: true });
+    await $`echo ${`services:
+  app:
+    image: alpine
+    command: sleep infinity
+    container_name: ${stack}-app`} > ${testRoot}/client/docker/stacks/${stack}/docker-compose.yaml`;
+  }
+}
+
+test("self stack: pulled with the other stacks up front, not again by prepareSelfUpdate", async () => {
+  const { testRoot, port, docker, gitainer, postHelper, cleanup } = getTestSetup("pullself-gitainer");
+  try {
+    await gitainer.initRepo();
+    const { calls } = stubDockerCalls(docker);
+    gitainer.listen(port);
+    await cloneAndConfigRepo(testRoot, port);
+
+    await writeSelfStackTest(testRoot, ["pullself-other", "pullself-gitainer"]);
+    const postPromise = waitForSynthesisSuccess(postHelper);
+    await $`git add . && git commit -m "add stacks" && git push`.cwd(testRoot + "/client/docker");
+    await postPromise;
+
+    expect(calls.slice(0, 2).sort()).toEqual(["composePull:pullself-gitainer", "composePull:pullself-other"]);
+    expect(calls.slice(2)).toEqual([
+      "composeUpdate:pullself-other",
+      "prepareSelfUpdate:pullself-gitainer",
+      "selfUpdateTrigger:pullself-gitainer",
+    ]);
+  } finally {
+    await cleanup();
+  }
+}, { timeout: 100_000 });
+
+test("self stack: a failed gitainer image pull fails before any other stack is touched", async () => {
+  const { testRoot, port, docker, gitainer, postHelper, cleanup } = getTestSetup("pullselffail-gitainer");
+  try {
+    await gitainer.initRepo();
+    const { calls } = stubDockerCalls(docker, ["pullselffail-gitainer"]);
+    gitainer.listen(port);
+    await cloneAndConfigRepo(testRoot, port);
+
+    await writeSelfStackTest(testRoot, ["pullselffail-other", "pullselffail-gitainer"]);
+    const postPromise = waitForSynthesisFailure(postHelper);
+    await $`git add . && git commit -m "add stacks" && git push`.cwd(testRoot + "/client/docker").nothrow();
+    await postPromise;
+
+    expect(calls.filter(call => !call.startsWith("composePull"))).toEqual([]);
   } finally {
     await cleanup();
   }

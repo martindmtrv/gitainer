@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { $ } from "bun";
+import { isTransientPullError, withRetry } from "./retry";
 import jsyaml from "js-yaml";
 import selfUpdateScript from "./self-update.sh" with { type: "text" };
 
@@ -148,9 +149,10 @@ export class DockerClient {
   }
 
   /**
-   * Compose update is -> down(), pull(), up()
+   * Compose update is -> down(), pull(), up(). Pass `pull: false` when the images were already
+   * pulled (see composePull()), so a failed pull can't leave the stack down.
    */
-  async composeUpdate(composeString: string, stackName: string) {
+  async composeUpdate(composeString: string, stackName: string, pull: boolean = true) {
     // validate the shutdown hook up front, so a malformed one fails the deploy that introduced
     // it rather than the later down() of this stack
     extractShutdownHook(composeString);
@@ -167,10 +169,11 @@ export class DockerClient {
 
     if (cmdEnv) {
       await $`docker-compose -f ${strippedFilename} -p ${stackName} down`.env(cmdEnv);
-      await $`docker-compose -f ${strippedFilename} pull`.env(cmdEnv);
     } else {
       await $`docker-compose -f ${strippedFilename} -p ${stackName} down`;
-      await $`docker-compose -f ${strippedFilename} pull`;
+    }
+    if (pull) {
+      await this.pullWithRetry(strippedFilename, stackName, cmdEnv);
     }
 
     const hydratedCompose = await this.preprocessCompose(composeString, cmdEnv);
@@ -205,6 +208,10 @@ export class DockerClient {
     }
   }
 
+  // a proxy config reload drops the connection for a moment, so a few seconds apart is enough
+  static PULL_ATTEMPTS = 3;
+  static PULL_RETRY_DELAY_MS = 5_000;
+
   // env vars that are process/runtime bookkeeping rather than gitainer config or compose
   // variable-interpolation values - forwarding them into the sibling would be pointless at
   // best (nobody names a compose variable "PATH") and could shadow the sibling's own values
@@ -230,7 +237,7 @@ export class DockerClient {
    * sees a broken/aborted push even though the update went through. Deferring the trigger until
    * after the response is sent avoids that race.
    */
-  async prepareSelfUpdate(composeString: string, stackName: string): Promise<() => Promise<void>> {
+  async prepareSelfUpdate(composeString: string, stackName: string, pull: boolean = true): Promise<() => Promise<void>> {
     const config = extractRemoteHostConfig(composeString);
     if (config) {
       throw new Error(`Self-update stack "${stackName}" cannot use a remote host (#@) comment; gitainer can only self-update the host it is running on`);
@@ -238,7 +245,10 @@ export class DockerClient {
 
     const strippedCompose = this.stripPrefixEntrypoint(composeString);
     const strippedFilename = this.composeStringToTmp(strippedCompose);
-    await $`docker-compose -f ${strippedFilename} pull`;
+    // callers that already pulled (see GitainerServer.synthesisTime) pass pull: false
+    if (pull) {
+      await this.pullWithRetry(strippedFilename, stackName);
+    }
 
     const hydratedCompose = await this.preprocessCompose(composeString);
     const hydratedFilename = this.composeStringToTmp(hydratedCompose);
@@ -338,11 +348,24 @@ export class DockerClient {
     const strippedCompose = this.stripPrefixEntrypoint(composeString);
     const strippedFilename = this.composeStringToTmp(strippedCompose);
 
-    if (cmdEnv) {
-      await $`docker-compose -f ${strippedFilename} pull`.env(cmdEnv);
-    } else {
-      await $`docker-compose -f ${strippedFilename} pull`;
-    }
+    await this.pullWithRetry(strippedFilename, stackName, cmdEnv);
+  }
+
+  /**
+   * `docker-compose pull`, retried: pulls through a reverse proxy can fail with `EOF` when the
+   * proxy reloads its config mid-request (e.g. caddy-docker-proxy reloading on every container
+   * start/stop, which is exactly what a deploy causes).
+   */
+  private async pullWithRetry(filename: string, stackName: string, cmdEnv?: Record<string, string | undefined>) {
+    await withRetry(
+      () => cmdEnv ? $`docker-compose -f ${filename} pull`.env(cmdEnv) : $`docker-compose -f ${filename} pull`,
+      {
+        attempts: DockerClient.PULL_ATTEMPTS,
+        delayMs: DockerClient.PULL_RETRY_DELAY_MS,
+        label: `Pulling images for ${stackName}`,
+        shouldRetry: isTransientPullError,
+      },
+    );
   }
 
   /**

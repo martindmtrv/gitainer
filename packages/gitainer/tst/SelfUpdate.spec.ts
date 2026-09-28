@@ -223,6 +223,8 @@ test("self-update: the recreate trigger is deferred past the push response, and 
     let triggerInvoked = false;
     let releaseTrigger!: () => void;
     const triggerGate = new Promise<void>(resolve => { releaseTrigger = resolve; });
+    // the self stack is pulled up front with the other stacks, before prepareSelfUpdate()
+    (gitainer.docker as any).composePull = async () => {};
     (gitainer.docker as any).prepareSelfUpdate = async (_compose: string, _stackName: string) => {
       return async () => {
         triggerInvoked = true;

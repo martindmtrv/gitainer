@@ -244,6 +244,23 @@ export class GitainerServer {
         log("Change did not contain any stack changes, so this synthesis is a noop");
       }
 
+      // pull every stack's images before touching any stack, so a bad image (a typo, the
+      // registry being down) fails the synthesis before anything is torn down, and the pulls
+      // don't overlap the container churn (and reverse proxy reloads) of the deploys below
+      for (const change of combinedStackChanges) {
+        currentStack = change.file;
+        const stackName = GitainerServer.stackPattern.exec(change.file)?.[1];
+        // deletes and renames out of the stack pattern deploy nothing. The self stack is pulled
+        // here too, so a bad gitainer image also fails before any other stack is touched
+        if (change.type === GitChangeType.DELETE || !stackName) {
+          continue;
+        }
+
+        hydratedCompose = await this.bareRepo.getStack(stackName) as string;
+        log(`Pulling images for ${stackName}`);
+        await this.docker.composePull(hydratedCompose, stackName);
+      }
+
       // apply each stack change
       for (const change of combinedStackChanges) {
         currentStack = change.file;
@@ -275,7 +292,7 @@ export class GitainerServer {
           // response for this push is still in flight would abort it client-side even though
           // the update succeeded. The caller runs pendingSelfUpdateTriggers after the response
           // is fully sent.
-          pendingSelfUpdateTriggers.push(await this.docker.prepareSelfUpdate(hydratedCompose, stackName));
+          pendingSelfUpdateTriggers.push(await this.docker.prepareSelfUpdate(hydratedCompose, stackName, false));
           continue;
         }
 
@@ -287,11 +304,9 @@ export class GitainerServer {
           const willRedeploy = change.type !== GitChangeType.DELETE && !renamedOutOfStack;
 
           if (willRedeploy) {
+            // images were already pulled above, so there's no pull-induced downtime between
+            // down() and up()
             hydratedCompose = await this.bareRepo.getStack(stackName) as string;
-            // pull the new stack's images before deconfiguring the old one, so a same-image
-            // update has no pull-induced downtime between down() and up()
-            log(`Pulling images for ${stackName} before deconfiguring previous stack`);
-            await this.docker.composePull(hydratedCompose, stackName);
           }
 
           if (oldContent) {
@@ -311,7 +326,7 @@ export class GitainerServer {
         // We don't log the full compose file to the git client as it can be very long
         console.log(hydratedCompose);
 
-        await this.docker.composeUpdate(hydratedCompose, stackName);
+        await this.docker.composeUpdate(hydratedCompose, stackName, false);
         successfullyProcessedStacks.push({
           file: change.file,
           stackName,

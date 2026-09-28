@@ -128,6 +128,13 @@ async function cloneAndConfigRepo(testRoot: string, port: number) {
 
 test("push stack with remote host fails on connection and propagates error to webhook", async () => {
   const { testRoot, port, gitainer, postHelper, cleanup } = getTestSetup();
+  // mock remote docker host: accepts the ssh connection and closes it straight away, so ssh
+  // fails immediately instead of waiting out its connect timeout on an unreachable address
+  const mockSshHost = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { open(socket) { socket.end(); }, data() {} },
+  });
   try {
     await gitainer.initRepo();
     gitainer.listen(port);
@@ -136,8 +143,7 @@ test("push stack with remote host fails on connection and propagates error to we
     const stackRoot = testRoot + "/client/docker/stacks/remote-app";
     mkdirSync(stackRoot, { recursive: true });
 
-    // 192.0.2.1 is reserved for documentation and is non-routable, ensuring connection timeout/failure
-    const compose = `#@ root@192.0.2.1:/opt/stack
+    const compose = `#@ ssh://root@127.0.0.1:${mockSshHost.port}:/opt/stack
 services:
   app:
     image: alpine
@@ -149,7 +155,7 @@ services:
 
     const postPromise = new Promise((resolve, reject) => {
       postHelper.callback = (body: any) => {
-        if (body.err && body.err.includes("Got an error during synthesis") && body.err.includes("192.0.2.1")) {
+        if (body.err && body.err.includes("Got an error during synthesis") && body.err.includes(`127.0.0.1`)) {
           setTimeout(() => resolve(null), 1000);
         } else {
           console.log("Received unexpected webhook body:", body);
@@ -161,9 +167,10 @@ services:
     await $`git add . && git commit -m "add remote host stack" && git push 2>&1`.cwd(testRoot + "/client/docker");
     await postPromise;
   } finally {
+    mockSshHost.stop(true);
     await cleanup();
   }
-}, { timeout: 100_000 });
+}, { timeout: 30_000 });
 
 test("push stack with invalid syntax remote host comment fails validation and propagates error to webhook", async () => {
   const { testRoot, port, gitainer, postHelper, cleanup } = getTestSetup();

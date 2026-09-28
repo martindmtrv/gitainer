@@ -4,6 +4,7 @@ import { ResetMode } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
+import { changedEnvKeys } from '../server/envUtils';
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
 import { createInitialCommitWithReadme } from './gitUtils';
 import { WebhookEventType, webhookTitle } from '../webhooks/WebhookEventType';
@@ -147,35 +148,27 @@ export class GitainerServer {
 
   async checkForStackEnvUpdate() {
     console.log("=== start checking for env changes ===");
-    let modifiedEnvs: string[] = [];
 
     console.log(`writing new envs to ${this.gitainerDataPath}/tmpEnv`);
 
     await $`env > ${this.gitainerDataPath}/tmpEnv`;
 
-    // make sure this exists or the diff won't work
+    // make sure this exists or the read below fails
     await $`touch ${this.gitainerDataPath}/lastSynthesizedEnv`;
 
-    try {
-      console.log(`diffing current tmpEnv to lastSynthesizedEnv`);
-      const diff = await $`diff --new-line-format="%L" --old-line-format="" --unchanged-line-format="" ${this.gitainerDataPath}/lastSynthesizedEnv ${this.gitainerDataPath}/tmpEnv`.quiet();
+    console.log(`diffing current tmpEnv to lastSynthesizedEnv`);
+    const modifiedEnvs = changedEnvKeys(
+      await Bun.file(`${this.gitainerDataPath}/lastSynthesizedEnv`).text(),
+      await Bun.file(`${this.gitainerDataPath}/tmpEnv`).text(),
+    );
 
-      // console.log("diff exit code:", diff.exitCode);
+    if (modifiedEnvs.length === 0) {
       console.log("no diff detected");
       return;
-    } catch (e) {
-      // for some reason this diff command exits as an error
-      const output = (e as ShellError).text();
-      // console.log("diff exit code:", (e as ShellError).exitCode);
-      // only log the keys, the diff lines contain values which may be secrets (e.g. from Infisical)
-      modifiedEnvs = output
-        .split("\n")
-        .filter(env => env.includes("="))
-        .map(env => env.slice(0, env.indexOf("=")))
-        .filter(key => key.length > 0);
-
-      console.log("Detected env changes", modifiedEnvs);
     }
+
+    // only log the keys, the values may be secrets (e.g. from Infisical)
+    console.log("Detected env changes", modifiedEnvs);
 
     console.log("Checking for compose files that use these envs");
 

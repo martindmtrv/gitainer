@@ -2,7 +2,10 @@
 set -e
 
 # Start dockerd in the background
-dockerd-entrypoint.sh &
+# Docker 29 defaults to the containerd image store, which (unlike the classic storage drivers)
+# doesn't fall back to vfs when overlay can't be nested, e.g. when the tests themselves run
+# inside a container.
+dockerd-entrypoint.sh --feature containerd-snapshotter=false &
 
 # Wait for dockerd to be ready
 echo "Waiting for Docker daemon to start..."

@@ -168,9 +168,9 @@ export class DockerClient {
     const strippedFilename = this.composeStringToTmp(strippedCompose);
 
     if (cmdEnv) {
-      await $`docker-compose -f ${strippedFilename} -p ${stackName} down`.env(cmdEnv);
+      await $`docker compose -f ${strippedFilename} -p ${stackName} down`.env(cmdEnv);
     } else {
-      await $`docker-compose -f ${strippedFilename} -p ${stackName} down`;
+      await $`docker compose -f ${strippedFilename} -p ${stackName} down`;
     }
     if (pull) {
       await this.pullWithRetry(strippedFilename, stackName, cmdEnv);
@@ -180,9 +180,9 @@ export class DockerClient {
     const finalFilename = this.composeStringToTmp(hydratedCompose);
 
     if (cmdEnv) {
-      return await $`docker-compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`.env(cmdEnv);
+      return await $`docker compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`.env(cmdEnv);
     } else {
-      return await $`docker-compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`;
+      return await $`docker compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`;
     }
   }
 
@@ -252,7 +252,9 @@ export class DockerClient {
 
     const hydratedCompose = await this.preprocessCompose(composeString);
     const hydratedFilename = this.composeStringToTmp(hydratedCompose);
-    const helperImage = process.env.GITAINER_SELF_UPDATE_HELPER_IMAGE || "docker:27.1.2-alpine3.20";
+    // The Dockerfile sets this to the docker image gitainer itself is built on (its DOCKER_VERSION
+    // build arg); the fallback only applies when running outside that image.
+    const helperImage = process.env.GITAINER_SELF_UPDATE_HELPER_IMAGE || "docker:cli";
     const containerName = this.selfUpdateContainerName(stackName);
 
     // Forward gitainer's own environment into the sibling (bare `-e KEY` makes docker pull the
@@ -352,13 +354,13 @@ export class DockerClient {
   }
 
   /**
-   * `docker-compose pull`, retried: pulls through a reverse proxy can fail with `EOF` when the
+   * `docker compose pull`, retried: pulls through a reverse proxy can fail with `EOF` when the
    * proxy reloads its config mid-request (e.g. caddy-docker-proxy reloading on every container
    * start/stop, which is exactly what a deploy causes).
    */
   private async pullWithRetry(filename: string, stackName: string, cmdEnv?: Record<string, string | undefined>) {
     await withRetry(
-      () => cmdEnv ? $`docker-compose -f ${filename} pull`.env(cmdEnv) : $`docker-compose -f ${filename} pull`,
+      () => cmdEnv ? $`docker compose -f ${filename} pull`.env(cmdEnv) : $`docker compose -f ${filename} pull`,
       {
         attempts: DockerClient.PULL_ATTEMPTS,
         delayMs: DockerClient.PULL_RETRY_DELAY_MS,
@@ -388,9 +390,9 @@ export class DockerClient {
     await this.runShutdownHook(hookCompose, stackName, cmdEnv, log);
 
     if (cmdEnv) {
-      return await $`docker-compose -f ${filename} -p ${stackName} down`.env(cmdEnv);
+      return await $`docker compose -f ${filename} -p ${stackName} down`.env(cmdEnv);
     } else {
-      return await $`docker-compose -f ${filename} -p ${stackName} down`;
+      return await $`docker compose -f ${filename} -p ${stackName} down`;
     }
   }
 

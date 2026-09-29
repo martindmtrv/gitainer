@@ -32,7 +32,7 @@ services:
       # STACK_UPDATE_ON_ENV_CHANGE: 1 # 1/true/yes/on enables, anything else (incl. 0) disables
       # POST_WEBHOOK: <some POST endpoint>
       # GITAINER_SELF_STACK: <name of the stack that is gitainer's own deployment, see Self-Updating Gitainer>
-      # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:27.1.2-alpine3.20
+      # GITAINER_SELF_UPDATE_HELPER_IMAGE: <defaults to the docker image gitainer is built on>
       # defaults
       # GIT_ROOT: /var/gitainer/repo
       # GITAINER_DATA: /var/gitainer/data
@@ -292,7 +292,7 @@ Gitainer can manage its own deployment as a normal stack, so pushing a change to
 ```yaml
 environment:
   GITAINER_SELF_STACK: gitainer
-  # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:27.1.2-alpine3.20 (default, override for air-gapped/mirrored registries)
+  # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:<version>-alpine<version> (defaults to the docker image gitainer is built on, override for air-gapped/mirrored registries)
 ```
 
 With `GITAINER_SELF_STACK` set, a push that touches that stack pulls the new image in-process (safe - it never touches the running container), then hands the actual recreate off to a short-lived, detached helper container launched via the Docker socket. That helper survives gitainer's own container being replaced, since it's a sibling container rather than a child process.
@@ -336,7 +336,7 @@ Docker compose also natively supports [fragments](https://docs.docker.com/refere
 
 Docker compose also allows for [YAML merge syntax](https://yaml.org/type/merge.html) to add properties to existing mappings
 
-Gitainer solves this by introducing a new concept of importing within Docker Compose. In short, adding a special comment allows you to patch in your desired fragment, before docker-compose is ever called. This allows us to get around these limitations, without any actual copy and pasting required.
+Gitainer solves this by introducing a new concept of importing within Docker Compose. In short, adding a special comment allows you to patch in your desired fragment, before `docker compose` is ever called. This allows us to get around these limitations, without any actual copy and pasting required.
 
 ### Constants Example
 
@@ -359,7 +359,7 @@ services:
     <<: [*common]
 ```
 
-Gitainer will patch in the file before it runs `docker-compose` resulting in this docker-compose.yaml
+Gitainer will patch in the file before it runs `docker compose` resulting in this docker-compose.yaml
 
 ```
 # fragments start
@@ -403,7 +403,7 @@ services:
       <<: [*specific_labels]
 ```
 
-Gitainer will patch in the file before it runs `docker-compose` resulting in this docker-compose.yaml
+Gitainer will patch in the file before it runs `docker compose` resulting in this docker-compose.yaml
 
 ```
 x-configuration:
@@ -509,7 +509,7 @@ services:
 
 Since getting in to selfhosting about 2 years ago, I have used Portainer to manage Docker stacks. After using it for a while, I found many areas in which I thought the core experience of managing stacks could be improved.
 
-Most people already use git repos to manage their stacks, or some structured directories on the host machine where they manually run `docker-compose` for when making changes. For myself, I used a git repo on my local Gitea instance, which contained a custom action script that could gather the diff of my changes and then make POST requests to the Portainer API.
+Most people already use git repos to manage their stacks, or some structured directories on the host machine where they manually run `docker compose` for when making changes. For myself, I used a git repo on my local Gitea instance, which contained a custom action script that could gather the diff of my changes and then make POST requests to the Portainer API.
 
 This was a clunky solution for many reasons and I ultimately came to the conclusion that building something simple to automate this process would be more valuable and extensible for the future and may also help others that are looking for this sort of solution.
 

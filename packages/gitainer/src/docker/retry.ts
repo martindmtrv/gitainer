@@ -39,7 +39,7 @@ const TRANSIENT_PULL_ERRORS = [
 ];
 
 /**
- * Whether a failed `docker-compose pull` is worth retrying. Only transient registry errors are:
+ * Whether a failed `docker compose pull` is worth retrying. Only transient registry errors are:
  * an invalid compose file, a missing or misspelled image, or an unreachable docker daemon
  * (`error during connect`, e.g. a remote host that's down) fail the same way every time.
  */

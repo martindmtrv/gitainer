@@ -1,7 +1,15 @@
+# Docker version for both stages and for the self-update helper image. Match it to the Docker
+# host: bump it here only, or override with `--build-arg DOCKER_VERSION=...`.
+ARG DOCKER_VERSION=29.7.2
+ARG ALPINE_VERSION=3.24
+
 # ==============================================================================
 # Test Stage
 # ==============================================================================
-FROM docker:27.1.2-dind AS test
+FROM docker:${DOCKER_VERSION}-dind-alpine${ALPINE_VERSION} AS test
+ARG DOCKER_VERSION
+ARG ALPINE_VERSION
+ENV GITAINER_SELF_UPDATE_HELPER_IMAGE=docker:${DOCKER_VERSION}-alpine${ALPINE_VERSION}
 
 # Install dependencies (git for tests, bash for scripts)
 RUN apk add --no-cache git make musl-dev go curl
@@ -32,7 +40,9 @@ CMD ["bun", "test"]
 # ==============================================================================
 # Production Stage
 # ==============================================================================
-FROM docker:27.1.2-alpine3.20 AS production
+FROM docker:${DOCKER_VERSION}-alpine${ALPINE_VERSION} AS production
+ARG DOCKER_VERSION
+ARG ALPINE_VERSION
 
 LABEL org.opencontainers.image.source=https://github.com/martindmtrv/gitainer
 LABEL org.opencontainers.image.description="Simple Git-based container management platform for Docker Standalone"
@@ -79,6 +89,7 @@ ENV GITAINER_DATA=/var/gitainer/data
 ENV REPO_NAME=docker
 ENV GIT_BRANCH=main
 ENV ENABLE_RAW_API=0
+ENV GITAINER_SELF_UPDATE_HELPER_IMAGE=docker:${DOCKER_VERSION}-alpine${ALPINE_VERSION}
 
 ENV MIGRATION_PATH=/var/gitainer/migration
 RUN echo "cd /home/gitainer && bun run migrate" > /bin/migrate-portainer

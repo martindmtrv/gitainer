@@ -13,7 +13,7 @@ services:
       STACK_UPDATE_ON_ENV_CHANGE: 1
       # POST_WEBHOOK:
       # GITAINER_SELF_STACK: <name of the stack that is gitainer's own deployment>
-      # GITAINER_SELF_UPDATE_HELPER_IMAGE: docker:27.1.2-alpine3.20
+      # GITAINER_SELF_UPDATE_HELPER_IMAGE: <defaults to the docker image gitainer is built on>
       # defaults
       # GIT_ROOT: /var/gitainer/repo
       # GITAINER_DATA: /var/gitainer/data

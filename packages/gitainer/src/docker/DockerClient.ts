@@ -92,6 +92,29 @@ export function extractShutdownHook(composeString: string): string[] {
   throw new Error("x-shutdown-hook must be a command string or a list of command strings");
 }
 
+/**
+ * Whether the compose file sets the top-level `x-gitainer-disabled: true`, which keeps the stack
+ * down. Read from the parsed YAML, so a commented-out flag doesn't count. Throws on a value that
+ * isn't a boolean, so a typo like `"true"` fails the push instead of deploying the stack.
+ */
+export function isStackDisabled(composeString: string): boolean {
+  let parsed: any;
+  try {
+    parsed = jsyaml.load(composeString);
+  } catch (e) {
+    return false;
+  }
+
+  const disabled = parsed && typeof parsed === 'object' ? parsed['x-gitainer-disabled'] : undefined;
+  if (disabled === undefined || disabled === null) {
+    return false;
+  }
+  if (typeof disabled === 'boolean') {
+    return disabled;
+  }
+  throw new Error(`x-gitainer-disabled must be true or false, got ${JSON.stringify(disabled)}`);
+}
+
 export function parseCommandString(cmd: string): string[] {
   const matches = cmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
   return matches.map(arg => {
@@ -200,13 +223,36 @@ export class DockerClient {
       await this.pullWithRetry(strippedFilename, stackName, cmdEnv);
     }
 
+    return await this.hydratedUp(composeString, stackName, cmdEnv, true);
+  }
+
+  /**
+   * `docker compose up -d` without a down or pull first: starts a downed stack, and only
+   * recreates containers whose config (or env) changed. Images that aren't present locally are
+   * still pulled by compose itself.
+   */
+  async composeUp(composeString: string, stackName: string) {
+    extractShutdownHook(composeString);
+
+    const config = extractRemoteHostConfig(composeString);
+    const cmdEnv = config ? {
+      ...process.env,
+      DOCKER_HOST: config.dockerHost,
+      ...(config.composeProjectDir ? { COMPOSE_PROJECT_DIR: config.composeProjectDir } : {})
+    } : undefined;
+
+    return await this.hydratedUp(composeString, stackName, cmdEnv, false);
+  }
+
+  private async hydratedUp(composeString: string, stackName: string, cmdEnv: Record<string, string> | undefined, forceRecreate: boolean) {
     const hydratedCompose = await this.preprocessCompose(composeString, cmdEnv);
     const finalFilename = this.composeStringToTmp(hydratedCompose);
+    const recreateFlag = forceRecreate ? ["--force-recreate"] : [];
 
     if (cmdEnv) {
-      return await $`docker compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`.env(cmdEnv);
+      return await $`docker compose -f ${finalFilename} -p ${stackName} up -d ${recreateFlag}`.env(cmdEnv);
     } else {
-      return await $`docker compose -f ${finalFilename} -p ${stackName} up -d --force-recreate`;
+      return await $`docker compose -f ${finalFilename} -p ${stackName} up -d ${recreateFlag}`;
     }
   }
 
@@ -430,6 +476,19 @@ export class DockerClient {
       ? await $`docker ps -aq --filter ${filter}`.env(cmdEnv).text()
       : await $`docker ps -aq --filter ${filter}`.text();
     return output.trim().length > 0;
+  }
+
+  /**
+   * isStackDeployed() on the host the compose file targets (a remote host, if it sets one).
+   */
+  async isComposeStackDeployed(composeString: string, stackName: string): Promise<boolean> {
+    const config = extractRemoteHostConfig(composeString);
+    const cmdEnv = config ? {
+      ...process.env,
+      DOCKER_HOST: config.dockerHost,
+      ...(config.composeProjectDir ? { COMPOSE_PROJECT_DIR: config.composeProjectDir } : {})
+    } : undefined;
+    return await this.isStackDeployed(stackName, cmdEnv);
   }
 
   /**

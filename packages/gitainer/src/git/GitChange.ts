@@ -12,4 +12,7 @@ export interface GitChange {
   oldFile?: string;
   type: GitChangeType;
   reason: string;
+  // set when the stack is only pulled in by an env or fragment change it references, not by a
+  // change to its own compose file. Such a stack is skipped if it isn't deployed.
+  indirect?: boolean;
 };

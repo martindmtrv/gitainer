@@ -188,6 +188,7 @@ export class GitConsumer {
           file: file.file,
           type: GitChangeType.MODIFY,
           reason: `Stack contains references to ${matches}`,
+          indirect: true,
         });
       }
     }

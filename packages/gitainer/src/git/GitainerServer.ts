@@ -2,7 +2,7 @@ import { Git as GitServer, type PushData } from 'node-git-server';
 import { GitConsumer } from './GitConsumer';
 import { ResetMode } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
-import type { DockerClient } from '../docker/DockerClient';
+import { isStackDisabled, type DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
 import { changedEnvKeys, readEnvSnapshot, writeEnvSnapshot } from '../server/envUtils';
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
@@ -178,6 +178,17 @@ export class GitainerServer {
     }
   }
 
+  // a check that fails (e.g. an unreachable remote host) counts as deployed, so the synthesis
+  // goes ahead and reports the real error instead of silently skipping the stack
+  private async isIndirectStackDeployed(stackName: string, log: (msg: string) => void): Promise<boolean> {
+    try {
+      return await this.docker.isComposeStackDeployed(await this.bareRepo.getStack(stackName) as string, stackName);
+    } catch (e) {
+      log(`Could not check whether ${stackName} is deployed, redeploying it: ${e}`);
+      return true;
+    }
+  }
+
   isSelfStack(stackName: string): boolean {
     return !!this.selfStackName && stackName === this.selfStackName;
   }
@@ -219,7 +230,22 @@ export class GitainerServer {
       }
     });
 
-    const allStackChanges = Array.from(uniqueChangesMap.values());
+    // a stack that isn't deployed (downed through the API or by hand) isn't brought back up by
+    // an env or fragment change - only by a change to its own compose file, or an explicit
+    // up/restart/reload. A stack changed directly and via a fragment is kept as a direct change
+    // by the dedup above.
+    const skippedStacks: string[] = [];
+    const allStackChanges: GitChange[] = [];
+    for (const change of uniqueChangesMap.values()) {
+      const stackName = GitainerServer.resolveStackName(change) as string;
+      if (change.indirect && !this.isSelfStack(stackName) && !(await this.isIndirectStackDeployed(stackName, log))) {
+        log(`== skipping ${stackName}: not deployed, so not redeploying it (${change.reason}) ==`);
+        skippedStacks.push(stackName);
+        continue;
+      }
+      allStackChanges.push(change);
+    }
+    const skippedMsg = skippedStacks.length ? `. Skipped ${skippedStacks.length} stack(s) that aren't deployed: ${skippedStacks.join(', ')}` : '';
     // process the self stack last, so any other stacks in this push get their fully
     // reversible update+rollback before the irreversible self-update is triggered
     const combinedStackChanges = this.selfStackName
@@ -230,6 +256,7 @@ export class GitainerServer {
       : allStackChanges;
     const successfullyProcessedStacks: { file: string, stackName: string, content: string }[] = [];
     const selfStackWarnings: string[] = [];
+    const disabledStacks: string[] = [];
     const pendingSelfUpdateTriggers: (() => Promise<void>)[] = [];
 
     try {
@@ -250,6 +277,10 @@ export class GitainerServer {
         }
 
         hydratedCompose = await this.bareRepo.getStack(stackName) as string;
+        // also validates the flag, so a bad value fails before any stack is touched
+        if (isStackDisabled(hydratedCompose)) {
+          continue;
+        }
         log(`Pulling images for ${stackName}`);
         await this.docker.composePull(hydratedCompose, stackName);
       }
@@ -266,7 +297,17 @@ export class GitainerServer {
         const renamedOutOfStack = isRename && !newStackName && !!oldStackName;
         log(`== stack synthesis -> ${stackName} (type: ${change.type}) ==`);
 
+        // x-gitainer-disabled: true keeps the stack down, like a delete that leaves it in the repo
+        const hasNewVersion = change.type !== GitChangeType.DELETE && !renamedOutOfStack;
+        const disabled = hasNewVersion && isStackDisabled(await this.bareRepo.getStack(stackName) as string);
+
         if (this.isSelfStack(stackName)) {
+          if (disabled) {
+            const warning = `Refusing to disable self-stack "${stackName}" (x-gitainer-disabled): the running gitainer container was left untouched.`;
+            log(warning);
+            selfStackWarnings.push(warning);
+            continue;
+          }
           if (change.type === GitChangeType.DELETE || renamedOutOfStack) {
             const warning = `Refusing to ${renamedOutOfStack ? 'tear down' : 'delete'} self-stack "${stackName}": the running gitainer container was left untouched. Remove it manually via docker if this was intentional.`;
             log(warning);
@@ -294,25 +335,34 @@ export class GitainerServer {
           const oldContent = await this.bareRepo.getStack(stackName, cleanUpTarget);
           // renaming a compose file to no longer match the stack pattern (e.g. prefixing it to
           // keep it around for historical purposes) tears the stack down without redeploying it
-          const willRedeploy = change.type !== GitChangeType.DELETE && !renamedOutOfStack;
+          const willRedeploy = hasNewVersion && !disabled;
 
-          if (willRedeploy) {
+          if (hasNewVersion) {
             // images were already pulled above, so there's no pull-induced downtime between
             // down() and up()
             hydratedCompose = await this.bareRepo.getStack(stackName) as string;
           }
 
           if (oldContent) {
-            log(`Deconfiguring ${stackName} (deleted, renamed or modified)`);
-            // run the newest version's shutdown hook: the incoming one when redeploying, so a
+            log(`Deconfiguring ${stackName} (deleted, renamed, modified or disabled)`);
+            // run the newest version's shutdown hook: the incoming one when there is one, so a
             // push can fix a broken hook instead of being blocked by it
-            await this.docker.composeDown(oldContent, stackName, willRedeploy ? hydratedCompose : oldContent, log);
+            await this.docker.composeDown(oldContent, stackName, hasNewVersion ? hydratedCompose : oldContent, log);
+          }
+          if (disabled) {
+            log(`== ${stackName} has x-gitainer-disabled: true, not deploying it ==`);
+            disabledStacks.push(stackName);
           }
           if (!willRedeploy) {
             continue;
           }
         } else {
           hydratedCompose = await this.bareRepo.getStack(stackName) as string;
+          if (disabled) {
+            log(`== ${stackName} has x-gitainer-disabled: true, not deploying it ==`);
+            disabledStacks.push(stackName);
+            continue;
+          }
         }
 
         log(`<= ${change.file} =>`);
@@ -329,8 +379,10 @@ export class GitainerServer {
 
       const changedStackNames = combinedStackChanges.map(change => change.file).join(', ');
       res = {
-        msg: `Synthesis succeeded for ${combinedStackChanges.length} stack(s)${changedStackNames ? `: ${changedStackNames}` : ''}`,
+        msg: `Synthesis succeeded for ${combinedStackChanges.length} stack(s)${changedStackNames ? `: ${changedStackNames}` : ''}${disabledStacks.length ? `. Disabled with x-gitainer-disabled (not deployed): ${disabledStacks.join(', ')}` : ''}${skippedMsg}`,
         changes: combinedStackChanges,
+        ...(disabledStacks.length ? { disabledStacks } : {}),
+        ...(skippedStacks.length ? { skippedStacks } : {}),
         ...(selfStackWarnings.length ? { warnings: selfStackWarnings } : {}),
       };
 
@@ -343,11 +395,12 @@ export class GitainerServer {
       res = {
         output: (e as ShellError)?.stderr?.toString() || errMsg,
         failedStackContent: hydratedCompose,
+        ...(skippedStacks.length ? { skippedStacks } : {}),
       };
       if (!shouldRevertOnFail) {
         res = {
           ...res,
-          err: `Got an error during synthesis of stack "${currentStack}": ${res.output}`,
+          err: `Got an error during synthesis of stack "${currentStack}": ${res.output}${skippedMsg}`,
         };
       } else {
         const succeededStacks = combinedStackChanges.length === 0 || currentStack === combinedStackChanges[0].file ? [] :
@@ -358,7 +411,7 @@ export class GitainerServer {
             ).map(stack => stack.file);
         res = {
           ...res,
-          err: `Got an error during synthesis of stack "${currentStack}", removing the bad commit. Succeeded stacks (not rolled back): ${succeededStacks.length ? succeededStacks.join(', ') : 'none'}. Error: ${res.output}`,
+          err: `Got an error during synthesis of stack "${currentStack}", removing the bad commit. Succeeded stacks (not rolled back): ${succeededStacks.length ? succeededStacks.join(', ') : 'none'}. Error: ${res.output}${skippedMsg}`,
           suceededStacks: succeededStacks,
           failedStack: currentStack,
           latestCommit: (await this.bareRepo.repo.log({ maxCount: 1 })).latest,

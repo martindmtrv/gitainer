@@ -5,7 +5,7 @@ import { stream } from 'hono/streaming';
 import { $, serve, ShellError } from "bun";
 import type { GitainerServer } from "../git/GitainerServer";
 import { WebhookEventType, webhookTitle } from "./WebhookEventType";
-import { parseNamedCommands } from "../docker/DockerClient";
+import { isStackDisabled, parseNamedCommands } from "../docker/DockerClient";
 
 // a stack update that runs longer than this switches to a streamed response with whitespace
 // keepalives, so the server's idleTimeout (90s) doesn't drop the connection mid-deploy
@@ -115,40 +115,26 @@ export class WebhookServer {
         }, 404);
       }
 
+      const disabledErr = this.disabledError(stackFile, stackName);
+      if (disabledErr) {
+        return c.json({
+          err: disabledErr,
+        }, 400);
+      }
+
       console.log(`== stack update from POST webhook -> ${stackName} ==`);
 
       const isSelfStack = this.gitainer.isSelfStack(stackName);
 
       if (!isSelfStack) {
-        const update = this.updateStack(stackFile, stackName);
-
-        // undefined if the update is still running after one keepalive interval
-        const result = await new Promise<UpdateResult | undefined>(resolve => {
-          const timer = setTimeout(() => resolve(undefined), this.keepaliveIntervalMs);
-          update.then(r => {
-            clearTimeout(timer);
-            resolve(r);
-          });
-        });
-
-        if (result) {
-          return c.json(result.body, result.status);
-        }
-
-        // Still running: commit to a 200 now and write whitespace (valid before a JSON value)
-        // until the update finishes, then the result. A failure is only reported in `err`.
-        c.set('keepalive', true);
-        c.header("Content-Type", "application/json");
-        return stream(c, async (streamApi) => {
-          const keepalive = setInterval(() => streamApi.write("\n"), this.keepaliveIntervalMs);
-          try {
-            await streamApi.write("\n");
-            const { body } = await update;
-            await streamApi.write(isPretty(c) ? JSON.stringify(body, null, 2) : JSON.stringify(body));
-          } finally {
-            clearInterval(keepalive);
-          }
-        });
+        return this.respondWithKeepalive(c, this.runStackAction(stackName, "updated", async () => {
+          // pull images before tearing the stack down, so a forced reload has no
+          // pull-induced downtime between down() and up() - mirrors the git-push path
+          // in GitainerServer.
+          await this.docker.composePull(stackFile, stackName);
+          await this.docker.composeDown(stackFile, stackName);
+          return await this.docker.composeUpdate(stackFile, stackName, false);
+        }));
       }
 
       // Self-stack: the recreate can replace gitainer's own container, which kills this
@@ -198,6 +184,59 @@ export class WebhookServer {
         }, 400);
       }
     });
+
+    // down / up / restart a stack without pulling its images. Gitainer's own stack is refused:
+    // downing it would kill the process serving this request, with nothing left to bring it back
+    const stackActions: Record<string, { verb: string, run: (stackFile: string, stackName: string) => Promise<{ text(): string }> }> = {
+      // runs the stack's x-shutdown-hook first, like a down from a git push
+      down: {
+        verb: "downed",
+        run: (stackFile, stackName) => this.docker.composeDown(stackFile, stackName),
+      },
+      up: {
+        verb: "started",
+        run: (stackFile, stackName) => this.docker.composeUp(stackFile, stackName),
+      },
+      // a forced reload minus the pull: down (with the shutdown hook), then up --force-recreate
+      restart: {
+        verb: "restarted",
+        run: async (stackFile, stackName) => {
+          await this.docker.composeDown(stackFile, stackName);
+          return await this.docker.composeUpdate(stackFile, stackName, false);
+        },
+      },
+    };
+
+    for (const [action, { verb, run }] of Object.entries(stackActions)) {
+      this.app.post(`/api/stacks/:stackName/${action}`, async (c) => {
+        const stackName = c.req.param('stackName');
+        const stackFile = await this.bareRepo.getStack(stackName);
+
+        if (!stackFile) {
+          return c.json({
+            err: `Unknown stack ${stackName}`,
+          }, 404);
+        }
+
+        if (this.gitainer.isSelfStack(stackName)) {
+          return c.json({
+            err: `Can't ${action} gitainer's own stack ${stackName}; use POST /api/stacks/${stackName} to update it`,
+          }, 400);
+        }
+
+        // a disabled stack can still be downed, but not brought up
+        const disabledErr = action === "down" ? undefined : this.disabledError(stackFile, stackName);
+        if (disabledErr) {
+          return c.json({
+            err: disabledErr,
+          }, 400);
+        }
+
+        console.log(`== stack ${action} from POST webhook -> ${stackName} ==`);
+
+        return this.respondWithKeepalive(c, this.runStackAction(stackName, verb, () => run(stackFile, stackName)));
+      });
+    }
 
     // bulk stop/start every container labelled gitainer.identifier=<identifier>, regardless of stack
     this.app.post('/api/labels/:identifier/stop', async (c) => {
@@ -350,20 +389,64 @@ export class WebhookServer {
     })
   }
 
-  private async updateStack(stackFile: string, stackName: string): Promise<UpdateResult> {
+  // why the stack can't be brought up, if it's disabled with x-gitainer-disabled
+  private disabledError(stackFile: string, stackName: string): string | undefined {
     try {
-      // pull images before tearing the stack down, so a forced reload has no
-      // pull-induced downtime between down() and up() - mirrors the git-push path
-      // in GitainerServer.
-      await this.docker.composePull(stackFile, stackName);
-      await this.docker.composeDown(stackFile, stackName);
-      const output = await this.docker.composeUpdate(stackFile, stackName, false);
+      return isStackDisabled(stackFile)
+        ? `Stack ${stackName} is disabled with x-gitainer-disabled: true; remove the flag in git to deploy it`
+        : undefined;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+
+  /**
+   * Responds with the result once `run` settles. If it's still running after one keepalive
+   * interval, commits to a 200 and writes whitespace (valid before a JSON value) every interval
+   * until it finishes, then the result, so the server's idleTimeout doesn't drop the connection.
+   * A failure after that point is only reported in `err`.
+   */
+  private async respondWithKeepalive(c: Context<Env>, run: Promise<UpdateResult>) {
+    // undefined if still running after one keepalive interval
+    const result = await new Promise<UpdateResult | undefined>(resolve => {
+      const timer = setTimeout(() => resolve(undefined), this.keepaliveIntervalMs);
+      run.then(r => {
+        clearTimeout(timer);
+        resolve(r);
+      });
+    });
+
+    if (result) {
+      return c.json(result.body, result.status);
+    }
+
+    c.set('keepalive', true);
+    c.header("Content-Type", "application/json");
+    return stream(c, async (streamApi) => {
+      const keepalive = setInterval(() => streamApi.write("\n"), this.keepaliveIntervalMs);
+      try {
+        await streamApi.write("\n");
+        const { body } = await run;
+        await streamApi.write(isPretty(c) ? JSON.stringify(body, null, 2) : JSON.stringify(body));
+      } finally {
+        clearInterval(keepalive);
+      }
+    });
+  }
+
+  /**
+   * Runs a compose action on a stack and builds its result, notifying POST_WEBHOOK on success.
+   * `verb` completes "Successfully <verb> stack <name>".
+   */
+  private async runStackAction(stackName: string, verb: string, action: () => Promise<{ text(): string }>): Promise<UpdateResult> {
+    try {
+      const output = await action();
       const outputText = output.text();
 
       const res = {
         title: webhookTitle(WebhookEventType.WEBHOOK),
         stackName,
-        msg: `Successfully updated stack ${stackName}: ${outputText}`,
+        msg: `Successfully ${verb} stack ${stackName}: ${outputText}`,
         output: outputText,
       };
 

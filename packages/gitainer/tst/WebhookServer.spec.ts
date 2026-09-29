@@ -147,6 +147,194 @@ describe("WebhookServer force stack update", () => {
   });
 });
 
+describe("WebhookServer stack down/up/restart", () => {
+  const mockBareRepo = {
+    getStack: async (name: string) => {
+      if (name === "existing" || name === "gitainer") {
+        return "version: '3'\nservices:\n  app:\n    image: nginx";
+      }
+      return null;
+    }
+  } as any;
+  const mockGitainer = {
+    postWebhook: undefined,
+    isSelfStack: (name: string) => name === "gitainer",
+  } as any;
+
+  function recordingDocker(calls: string[]) {
+    return {
+      composePull: async (composeString: string, stackName: string) => {
+        calls.push(`composePull:${stackName}`);
+      },
+      composeDown: async (composeString: string, stackName: string) => {
+        calls.push(`composeDown:${stackName}`);
+        return { text: () => "downed" };
+      },
+      composeUp: async (composeString: string, stackName: string) => {
+        calls.push(`composeUp:${stackName}`);
+        return { text: () => "up" };
+      },
+      composeUpdate: async (composeString: string, stackName: string, pull: boolean) => {
+        calls.push(`composeUpdate:${stackName}:pull=${pull}`);
+        return { text: () => "recreated" };
+      },
+    } as any;
+  }
+
+  test("POST /api/stacks/:stackName/down downs the stack without pulling or starting it", async () => {
+    const calls: string[] = [];
+    const server = new WebhookServer(recordingDocker(calls), mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/existing/down", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      title: "Gitainer: Webhook",
+      stackName: "existing",
+      msg: "Successfully downed stack existing: downed",
+      output: "downed",
+    });
+    expect(calls).toEqual(["composeDown:existing"]);
+  });
+
+  test("POST /api/stacks/:stackName/up starts the stack without a down or pull", async () => {
+    const calls: string[] = [];
+    const server = new WebhookServer(recordingDocker(calls), mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/existing/up", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).msg).toBe("Successfully started stack existing: up");
+    expect(calls).toEqual(["composeUp:existing"]);
+  });
+
+  test("POST /api/stacks/:stackName/restart downs and recreates the stack without pulling", async () => {
+    const calls: string[] = [];
+    const server = new WebhookServer(recordingDocker(calls), mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/existing/restart", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).msg).toBe("Successfully restarted stack existing: recreated");
+    expect(calls).toEqual(["composeDown:existing", "composeUpdate:existing:pull=false"]);
+  });
+
+  test("notifies POST_WEBHOOK on success", async () => {
+    const received: any[] = [];
+    const hook = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        received.push(await req.json());
+        return new Response("ok");
+      },
+    });
+
+    try {
+      const gitainer = { ...mockGitainer, postWebhook: `http://localhost:${hook.port}/` };
+      const server = new WebhookServer(recordingDocker([]), mockBareRepo, gitainer);
+
+      const res = await server.app.request("/api/stacks/existing/down", { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(received).toEqual([{
+        title: "Gitainer: Webhook",
+        stackName: "existing",
+        msg: "Successfully downed stack existing: downed",
+        output: "downed",
+      }]);
+    } finally {
+      hook.stop(true);
+    }
+  });
+
+  test("a failure responds with a 400", async () => {
+    const mockDocker = {
+      composeDown: async () => {
+        throw new Error("shutdown hook failed");
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/existing/down", { method: "POST" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ err: "shutdown hook failed" });
+  });
+
+  test("a slow action streams keepalives, then the result", async () => {
+    const mockDocker = {
+      composeUp: async () => {
+        await Bun.sleep(250);
+        return { text: () => "up" };
+      },
+    } as any;
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer, 50);
+
+    const res = await server.app.request("/api/stacks/existing/up", { method: "POST" });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toStartWith("\n\n");
+    expect(JSON.parse(text).msg).toBe("Successfully started stack existing: up");
+  });
+
+  test.each(["down", "up", "restart"])("POST /api/stacks/:stackName/%s returns 404 for unknown stack", async (action) => {
+    const calls: string[] = [];
+    const server = new WebhookServer(recordingDocker(calls), mockBareRepo, mockGitainer);
+
+    const res = await server.app.request(`/api/stacks/nope/${action}`, { method: "POST" });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ err: "Unknown stack nope" });
+    expect(calls).toEqual([]);
+  });
+
+  test.each(["down", "up", "restart"])("POST /api/stacks/:stackName/%s refuses gitainer's own stack", async (action) => {
+    const calls: string[] = [];
+    const server = new WebhookServer(recordingDocker(calls), mockBareRepo, mockGitainer);
+
+    const res = await server.app.request(`/api/stacks/gitainer/${action}`, { method: "POST" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).err).toBe(`Can't ${action} gitainer's own stack gitainer; use POST /api/stacks/gitainer to update it`);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("WebhookServer x-gitainer-disabled stacks", () => {
+  const stacks: Record<string, string> = {
+    disabled: "x-gitainer-disabled: true\nservices:\n  app:\n    image: nginx",
+    commented: "# x-gitainer-disabled: true\nservices:\n  app:\n    image: nginx",
+  };
+  const mockBareRepo = {
+    getStack: async (name: string) => stacks[name] ?? null,
+  } as any;
+  const mockGitainer = {
+    postWebhook: undefined,
+    isSelfStack: () => false,
+  } as any;
+  const mockDocker = {
+    composePull: async () => {},
+    composeDown: async () => ({ text: () => "downed" }),
+    composeUp: async () => ({ text: () => "up" }),
+    composeUpdate: async () => ({ text: () => "recreated" }),
+  } as any;
+
+  test.each(["", "/up", "/restart"])("POST /api/stacks/:stackName%s refuses a disabled stack", async (suffix) => {
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request(`/api/stacks/disabled${suffix}`, { method: "POST" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ err: "Stack disabled is disabled with x-gitainer-disabled: true; remove the flag in git to deploy it" });
+  });
+
+  test("POST /api/stacks/:stackName/down still downs a disabled stack", async () => {
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request("/api/stacks/disabled/down", { method: "POST" });
+    expect(res.status).toBe(200);
+  });
+
+  test.each(["", "/up", "/restart"])("POST /api/stacks/:stackName%s ignores a commented-out flag", async (suffix) => {
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    const res = await server.app.request(`/api/stacks/commented${suffix}`, { method: "POST" });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("WebhookServer keepalive for long stack updates", () => {
   const mockBareRepo = {
     getStack: async () => "version: '3'\nservices:\n  app:\n    image: nginx",

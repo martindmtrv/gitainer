@@ -31,13 +31,3 @@ export function changedEnvKeys(previous: string, current: string): string[] {
     .filter(([key, value]) => previousEnv.get(key) !== value)
     .map(([key]) => key);
 }
-
-/**
- * Whether compose file contents reference `envVar` as `$VAR` or `${VAR}` (including
- * `${VAR:-default}` and similar). Only the whole name matches, so `$LOCAL_ECR_DIRECT`
- * is not a reference to `LOCAL_ECR`.
- */
-export function referencesEnv(contents: string, envVar: string): boolean {
-  const name = envVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\$\\{?${name}(?![A-Za-z0-9_])`).test(contents);
-}

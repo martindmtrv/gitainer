@@ -211,7 +211,7 @@ When actually deploying this compose file, it will be resolved as
     - /mnt/HDD/dockerStorage:/data
 ```
 
-On startup, Gitainer checks the current set of environment variables against the last set of variables. If there is any differences, Gitainer will look through all stacks to see if any reference this variable and redeploy this stack if it does consume this variable.
+On startup, Gitainer checks the current set of environment variables against the last set of variables. If there is any differences, Gitainer will look through all stacks to see if any reference this variable and redeploy this stack if it does consume this variable. A stack consumes a variable when compose would interpolate it (`docker compose config --variables`), including in the fragments it imports; escaped `$$VAR` and variables in comments don't count.
 
 ### Infisical (secrets)
 In addition to using environment variables, Gitainer also now supports Infisical for secrets and variables. Secrets will be pulled and merged into the set of environment varibles to be used as descibed above, on the following cadence:

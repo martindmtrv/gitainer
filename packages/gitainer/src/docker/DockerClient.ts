@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { $ } from "bun";
 import { isTransientPullError, withRetry } from "./retry";
 import jsyaml from "js-yaml";
@@ -134,18 +134,42 @@ export function parseNamedCommands(raw: string): Record<string, string> {
   return commands as Record<string, string>;
 }
 
+function composeStringToTmp(composeString: string): string {
+  const fileName = `/tmp/gitainer/${randomUUID()}.yaml`;
+
+  // make tmp dir
+  if (!existsSync("/tmp/gitainer")) {
+    mkdirSync("/tmp/gitainer");
+  }
+
+  writeFileSync(fileName, composeString);
+
+  return fileName;
+}
+
+/**
+ * Names of the variables compose would interpolate in `composeString`, from
+ * `docker compose config --variables`. Unlike a regex over the text, this skips escaped `$$VAR`
+ * and variables in comments. Variables in `prefix_entrypoint` are included, since that ends up
+ * in the service's entrypoint and compose interpolates it there. Throws if compose can't parse
+ * the file.
+ */
+export async function composeVariables(composeString: string): Promise<string[]> {
+  const fileName = composeStringToTmp(composeString);
+  try {
+    const result = await $`docker compose -f ${fileName} config --variables --format json`.nothrow().quiet();
+    if (result.exitCode !== 0) {
+      throw new Error(`docker compose config failed (exit code ${result.exitCode}): ${result.stderr.toString().trim()}`);
+    }
+    return Object.keys(JSON.parse(result.stdout.toString()) || {});
+  } finally {
+    rmSync(fileName, { force: true });
+  }
+}
+
 export class DockerClient {
   private composeStringToTmp(composeString: string): string {
-    const fileName = `/tmp/gitainer/${randomUUID()}.yaml`;
-
-    // make tmp dir
-    if (!existsSync("/tmp/gitainer")) {
-      mkdirSync("/tmp/gitainer");
-    }
-
-    writeFileSync(fileName, composeString);
-
-    return fileName;
+    return composeStringToTmp(composeString);
   }
 
   /**

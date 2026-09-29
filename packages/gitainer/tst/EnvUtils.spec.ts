@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changedEnvKeys, parseBooleanEnv, referencesEnv } from "../src/server/envUtils";
+import { changedEnvKeys, parseBooleanEnv } from "../src/server/envUtils";
 
 test("parseBooleanEnv treats explicit truthy values as enabled", () => {
   for (const value of ["1", "true", "TRUE", "True", "yes", "on", " 1 "]) {
@@ -34,18 +34,4 @@ test("changedEnvKeys keeps everything after the first = in the value", () => {
 
 test("changedEnvKeys treats an empty previous dump as everything new", () => {
   expect(changedEnvKeys("", "A=1\nB=2\n")).toEqual(["A", "B"]);
-});
-
-test("referencesEnv matches $VAR and ${VAR} forms", () => {
-  expect(referencesEnv("image: $LOCAL_ECR/caddy:latest", "LOCAL_ECR")).toBe(true);
-  expect(referencesEnv("image: ${LOCAL_ECR}/caddy:latest", "LOCAL_ECR")).toBe(true);
-  expect(referencesEnv("image: ${LOCAL_ECR:-192.168.1.150:9120}/caddy", "LOCAL_ECR")).toBe(true);
-  expect(referencesEnv("url: http://$LOCAL_IP", "LOCAL_IP")).toBe(true);
-});
-
-test("referencesEnv does not match a longer variable with the same prefix", () => {
-  expect(referencesEnv("image: $LOCAL_ECR_DIRECT/caddy:latest", "LOCAL_ECR")).toBe(false);
-  expect(referencesEnv("image: ${LOCAL_ECR_DIRECT}/caddy:latest", "LOCAL_ECR")).toBe(false);
-  expect(referencesEnv("image: $LOCAL_ECR2/caddy", "LOCAL_ECR")).toBe(false);
-  expect(referencesEnv("LOCAL_ECR is not a reference", "LOCAL_ECR")).toBe(false);
 });

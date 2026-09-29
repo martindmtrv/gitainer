@@ -2,7 +2,7 @@ import { simpleGit as Git, GitError, type SimpleGit } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import { GitainerServer } from './GitainerServer';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { referencesEnv } from '../server/envUtils';
+import { composeVariables } from '../docker/DockerClient';
 
 export class GitConsumer {
   readonly repo: SimpleGit;
@@ -172,11 +172,10 @@ export class GitConsumer {
 
     for (const file of promises) {
       const matches: string[] = [];
-      envVars.forEach(envVar => {
-        if (referencesEnv(file.contents, envVar)) {
-          matches.push(envVar);
-        }
-      });
+      if (envVars.length > 0) {
+        const stackVariables = await this.getStackVariables(file.file);
+        matches.push(...envVars.filter(envVar => stackVariables.has(envVar)));
+      }
 
       fragments.forEach(fragment => {
         if (file.contents.includes(fragment)) {
@@ -194,6 +193,20 @@ export class GitConsumer {
     }
 
     return results;
+  }
+
+  /**
+   * The variables compose would interpolate in a stack, fragments included. Empty (and
+   * logged) when the stack can't be resolved or parsed: it couldn't be deployed either.
+   */
+  private async getStackVariables(stackFile: string): Promise<Set<string>> {
+    const stackName = (GitainerServer.stackPattern.exec(stackFile) as RegExpExecArray)[1];
+    try {
+      return new Set(await composeVariables(await this.getStack(stackName) as string));
+    } catch (e) {
+      console.error(`Could not read the variables of stack ${stackName}, not redeploying it for env changes`, e);
+      return new Set();
+    }
   }
 
   async writeAllStacksToDir(dir: string): Promise<void> {

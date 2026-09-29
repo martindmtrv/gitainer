@@ -1,28 +1,50 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { DockerClient } from "../docker/DockerClient";
 import type { GitConsumer } from "../git/GitConsumer";
-import { prettyJSON } from "hono/pretty-json";
 import { stream } from 'hono/streaming';
 import { $, serve, ShellError } from "bun";
 import type { GitainerServer } from "../git/GitainerServer";
 import { WebhookEventType, webhookTitle } from "./WebhookEventType";
 import { parseNamedCommands } from "../docker/DockerClient";
 
+// a stack update that runs longer than this switches to a streamed response with whitespace
+// keepalives, so the server's idleTimeout (90s) doesn't drop the connection mid-deploy
+const KEEPALIVE_INTERVAL_MS = 30_000;
+
+type Env = { Variables: { keepalive?: boolean } };
+
+type UpdateResult = { status: 200 | 400, body: Record<string, unknown> };
+
+function isPretty(c: Context) {
+  return c.req.query('pretty') !== undefined;
+}
+
 export class WebhookServer {
-  readonly app: Hono;
+  readonly app: Hono<Env>;
   readonly docker: DockerClient;
   readonly bareRepo: GitConsumer;
   readonly gitainer: GitainerServer;
   readonly namedCommands: Record<string, string>;
 
-  constructor(docker: DockerClient, bareRepo: GitConsumer, gitainer: GitainerServer) {
+  readonly keepaliveIntervalMs: number;
+
+  constructor(docker: DockerClient, bareRepo: GitConsumer, gitainer: GitainerServer, keepaliveIntervalMs = KEEPALIVE_INTERVAL_MS) {
     this.docker = docker;
     this.bareRepo = bareRepo;
     this.gitainer = gitainer;
     this.namedCommands = process.env.GITAINER_COMMANDS ? parseNamedCommands(process.env.GITAINER_COMMANDS) : {};
-    this.app = new Hono();
+    this.keepaliveIntervalMs = keepaliveIntervalMs;
+    this.app = new Hono<Env>();
 
-    this.app.use(prettyJSON());
+    // same as hono's prettyJSON(), which would read a keepalive stream to the end before
+    // sending any of it, so keepalive responses skip it and format their own JSON
+    this.app.use(async (c, next) => {
+      await next();
+      if (isPretty(c) && !c.get('keepalive') && c.res.headers.get('Content-Type')?.startsWith('application/json')) {
+        const obj = await c.res.json();
+        c.res = new Response(JSON.stringify(obj, null, 2), c.res);
+      }
+    });
 
     this.app.use('/api/*', async (c, next) => {
       const apiKey = process.env.GITAINER_API_KEY || process.env.WEBHOOK_API_KEY;
@@ -98,42 +120,35 @@ export class WebhookServer {
       const isSelfStack = this.gitainer.isSelfStack(stackName);
 
       if (!isSelfStack) {
-        try {
-          // pull images before tearing the stack down, so a forced reload has no
-          // pull-induced downtime between down() and up() - mirrors the git-push path
-          // in GitainerServer.
-          await docker.composePull(stackFile, stackName);
-          await docker.composeDown(stackFile, stackName);
-          const output = await docker.composeUpdate(stackFile, stackName, false);
-          const outputText = output.text();
+        const update = this.updateStack(stackFile, stackName);
 
-          const res = {
-            title: webhookTitle(WebhookEventType.WEBHOOK),
-            stackName,
-            msg: `Successfully updated stack ${stackName}: ${outputText}`,
-            output: outputText,
-          };
+        // undefined if the update is still running after one keepalive interval
+        const result = await new Promise<UpdateResult | undefined>(resolve => {
+          const timer = setTimeout(() => resolve(undefined), this.keepaliveIntervalMs);
+          update.then(r => {
+            clearTimeout(timer);
+            resolve(r);
+          });
+        });
 
-          if (this.gitainer.postWebhook) {
-            console.log(`== Sending POST to ${this.gitainer.postWebhook} ==`);
-            await fetch(this.gitainer.postWebhook, {
-              body: JSON.stringify(res),
-              headers: {
-                "Content-Type": "application/json",
-              },
-              method: "POST",
-            }).catch(err => console.error(err));
-            console.log("== Sent webhook notification ==");
-          }
-
-          return c.json(res);
-        } catch (e) {
-          const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
-          console.error(errMsg);
-          return c.json({
-            err: errMsg,
-          }, 400);
+        if (result) {
+          return c.json(result.body, result.status);
         }
+
+        // Still running: commit to a 200 now and write whitespace (valid before a JSON value)
+        // until the update finishes, then the result. A failure is only reported in `err`.
+        c.set('keepalive', true);
+        c.header("Content-Type", "application/json");
+        return stream(c, async (streamApi) => {
+          const keepalive = setInterval(() => streamApi.write("\n"), this.keepaliveIntervalMs);
+          try {
+            await streamApi.write("\n");
+            const { body } = await update;
+            await streamApi.write(isPretty(c) ? JSON.stringify(body, null, 2) : JSON.stringify(body));
+          } finally {
+            clearInterval(keepalive);
+          }
+        });
       }
 
       // Self-stack: the recreate can replace gitainer's own container, which kills this
@@ -333,6 +348,43 @@ export class WebhookServer {
         err: "Unknown API",
       }, 404);
     })
+  }
+
+  private async updateStack(stackFile: string, stackName: string): Promise<UpdateResult> {
+    try {
+      // pull images before tearing the stack down, so a forced reload has no
+      // pull-induced downtime between down() and up() - mirrors the git-push path
+      // in GitainerServer.
+      await this.docker.composePull(stackFile, stackName);
+      await this.docker.composeDown(stackFile, stackName);
+      const output = await this.docker.composeUpdate(stackFile, stackName, false);
+      const outputText = output.text();
+
+      const res = {
+        title: webhookTitle(WebhookEventType.WEBHOOK),
+        stackName,
+        msg: `Successfully updated stack ${stackName}: ${outputText}`,
+        output: outputText,
+      };
+
+      if (this.gitainer.postWebhook) {
+        console.log(`== Sending POST to ${this.gitainer.postWebhook} ==`);
+        await fetch(this.gitainer.postWebhook, {
+          body: JSON.stringify(res),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+        }).catch(err => console.error(err));
+        console.log("== Sent webhook notification ==");
+      }
+
+      return { status: 200, body: res };
+    } catch (e) {
+      const errMsg = (e as ShellError)?.stderr?.toString() || (e as Error)?.message || String(e);
+      console.error(errMsg);
+      return { status: 400, body: { err: errMsg } };
+    }
   }
 
   listen(port: number) {

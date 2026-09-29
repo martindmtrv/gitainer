@@ -147,6 +147,74 @@ describe("WebhookServer force stack update", () => {
   });
 });
 
+describe("WebhookServer keepalive for long stack updates", () => {
+  const mockBareRepo = {
+    getStack: async () => "version: '3'\nservices:\n  app:\n    image: nginx",
+  } as any;
+  const mockGitainer = {
+    postWebhook: undefined,
+    isSelfStack: () => false,
+  } as any;
+
+  function mockDocker(updateMs: number, fail = false) {
+    return {
+      composePull: async () => {},
+      composeDown: async () => {},
+      composeUpdate: async () => {
+        await Bun.sleep(updateMs);
+        if (fail) {
+          throw new Error("compose up failed");
+        }
+        return { text: () => "updated" };
+      },
+    } as any;
+  }
+
+  test("a fast failure still responds with a 400", async () => {
+    const server = new WebhookServer(mockDocker(0, true), mockBareRepo, mockGitainer, 1000);
+
+    const res = await server.app.request("/api/stacks/existing", { method: "POST" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).err).toBe("compose up failed");
+  });
+
+  test("a slow update streams whitespace, then the result", async () => {
+    const server = new WebhookServer(mockDocker(250), mockBareRepo, mockGitainer, 50);
+
+    const res = await server.app.request("/api/stacks/existing?pretty", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toStartWith("application/json");
+    const text = await res.text();
+    expect(text).toStartWith("\n\n");
+    expect(text).toContain('\n  "stackName": "existing"');
+    expect(JSON.parse(text).msg).toBe("Successfully updated stack existing: updated");
+  });
+
+  test("a slow failure responds with a 200 and reports it in err", async () => {
+    const server = new WebhookServer(mockDocker(250, true), mockBareRepo, mockGitainer, 50);
+
+    const res = await server.app.request("/api/stacks/existing", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(await res.text())).toEqual({ err: "compose up failed" });
+  });
+
+  test("keepalives hold the connection open past the server's idleTimeout", async () => {
+    // without keepalives Bun drops this request with an empty reply after ~8s. Bun checks
+    // timeouts in 4s ticks and closes after 4s for any idleTimeout <= 4, even while the
+    // response is being written, so 5s is the shortest one keepalives can hold open.
+    const server = new WebhookServer(mockDocker(12_000), mockBareRepo, mockGitainer, 1500);
+    const httpServer = Bun.serve({ idleTimeout: 5, fetch: server.app.fetch, port: 0 });
+
+    try {
+      const res = await fetch(`http://localhost:${httpServer.port}/api/stacks/existing?pretty`, { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(JSON.parse(await res.text()).stackName).toBe("existing");
+    } finally {
+      httpServer.stop(true);
+    }
+  }, { timeout: 20_000 });
+});
+
 describe("WebhookServer bulk stop/start by label", () => {
   const mockBareRepo = {} as any;
   const mockGitainer = {

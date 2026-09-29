@@ -112,7 +112,7 @@ On failure from an env-change-triggered resynthesis (no commit to roll back), th
 }
 ```
 
-**API-triggered update** (`POST /api/stacks/:stackName`, `title: "Gitainer: Webhook"`) only fires the webhook on success — a failed update responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`:
+**API-triggered update** (`POST /api/stacks/:stackName`, `title: "Gitainer: Webhook"`) only fires the webhook on success — a failed update responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`. An update still running after 30 seconds (e.g. a slow image pull) responds with a 200 straight away and streams a newline every 30 seconds until it finishes, so the connection isn't dropped as idle, then the JSON result; a failure then only shows up in its `err` field. The leading newlines are valid JSON whitespace, so `jq` and `JSON.parse` read the body as usual:
 ```json
 {
   "title": "Gitainer: Webhook",

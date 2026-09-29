@@ -4,7 +4,7 @@ import { ResetMode } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import type { DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
-import { changedEnvKeys } from '../server/envUtils';
+import { changedEnvKeys, readEnvSnapshot, writeEnvSnapshot } from '../server/envUtils';
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
 import { createInitialCommitWithReadme } from './gitUtils';
 import { WebhookEventType, webhookTitle } from '../webhooks/WebhookEventType';
@@ -146,24 +146,17 @@ export class GitainerServer {
     return this.bareRepo;
   }
 
+  // runs on every Infisical poll, so it stays silent unless an env actually changed
   async checkForStackEnvUpdate() {
-    console.log("=== start checking for env changes ===");
+    const currentEnv = await $`env`.text();
+    writeEnvSnapshot(`${this.gitainerDataPath}/tmpEnv`, currentEnv);
 
-    console.log(`writing new envs to ${this.gitainerDataPath}/tmpEnv`);
-
-    await $`env > ${this.gitainerDataPath}/tmpEnv`;
-
-    // make sure this exists or the read below fails
-    await $`touch ${this.gitainerDataPath}/lastSynthesizedEnv`;
-
-    console.log(`diffing current tmpEnv to lastSynthesizedEnv`);
     const modifiedEnvs = changedEnvKeys(
-      await Bun.file(`${this.gitainerDataPath}/lastSynthesizedEnv`).text(),
-      await Bun.file(`${this.gitainerDataPath}/tmpEnv`).text(),
+      readEnvSnapshot(`${this.gitainerDataPath}/lastSynthesizedEnv`),
+      currentEnv,
     );
 
     if (modifiedEnvs.length === 0) {
-      console.log("no diff detected");
       return;
     }
 
@@ -181,7 +174,7 @@ export class GitainerServer {
     } else {
       // nothing to synthesize, so record these envs as handled or the same diff is reported on every check
       console.log("No stacks use the changed envs, updating lastSynthesizedEnv");
-      await $`cp ${this.gitainerDataPath}/tmpEnv ${this.gitainerDataPath}/lastSynthesizedEnv`;
+      writeEnvSnapshot(`${this.gitainerDataPath}/lastSynthesizedEnv`, currentEnv);
     }
   }
 
@@ -342,7 +335,7 @@ export class GitainerServer {
       };
 
       log(res.msg);
-      await $`env > ${this.gitainerDataPath}/lastSynthesizedEnv`;
+      writeEnvSnapshot(`${this.gitainerDataPath}/lastSynthesizedEnv`, await $`env`.text());
     } catch (e) {
       const errMsg = (e as Error).hasOwnProperty('message') ? (e as Error).message : String(e);
       log(errMsg);

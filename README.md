@@ -228,7 +228,7 @@ Infisical wins. Its secrets override any key of the same name in Gitainer's `env
 
 #### Cache
 
-After each successful fetch, the secrets are written to `$GITAINER_DATA/infisicalCache.json` (readable only by its owner). If Infisical can't be reached (e.g. it sits behind a reverse proxy that is down), Gitainer applies the cached secrets with the same priority as a live fetch, so a restart or push during an outage still deploys stacks with their last known values instead of blank or `.env` ones. The file holds your secrets in plain text, so treat `$GITAINER_DATA` (and its backups) accordingly. Keys deleted from Infisical stay in the cache until the next successful fetch replaces it.
+After each successful fetch, the secrets are written to `$GITAINER_DATA/infisicalCache.json` (readable only by its owner). If Infisical can't be reached (e.g. it sits behind a reverse proxy that is down), Gitainer applies the cached secrets with the same priority as a live fetch, so a restart or push during an outage still deploys stacks with their last known values instead of blank or `.env` ones. The file holds your secrets in plain text, as do the `lastSynthesizedEnv` and `tmpEnv` snapshots next to it (all written readable only by their owner), so treat `$GITAINER_DATA` (and its backups) accordingly. Keys deleted from Infisical stay in the cache until the next successful fetch replaces it.
 
 To set this up, provide the following environment variables in your Gitainer deployment
 
@@ -241,6 +241,10 @@ To set this up, provide the following environment variables in your Gitainer dep
     INFISICAL_PROJECT_ID=<infisical project id>
     INFISICAL_PROJECT_ENVIRONMENT=<infisical project environment>
 ```
+
+These only need to be provided until the first successful fetch. After it, Gitainer keeps them in `$GITAINER_DATA/infisicalBootstrap.json` (readable only by its owner) and loads any that aren't set from there on startup, before connecting to Infisical, so you can then drop them from `environment:` or delete the `.env` entirely. Any you do set explicitly win over the cached ones (e.g. to rotate the client secret). If `$GITAINER_DATA` is lost, provide them again.
+
+They can also be stored in Infisical itself, e.g. to rotate the client secret there: add a second client secret to the machine identity, put it in Infisical as `INFISICAL_CLIENT_SECRET`, and revoke the old one once Gitainer has switched. When a fetch returns `INFISICAL_*` values that differ from the ones in use, Gitainer first logs in and fetches with them, and only switches (and saves them to `infisicalBootstrap.json`) if that works. Otherwise it logs an error once and keeps the current ones. Like other Infisical secrets, verified ones override `environment:` and `.env`.
 
 ### Remote Docker Host
 

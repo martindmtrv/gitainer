@@ -35,3 +35,8 @@ test("changedEnvKeys keeps everything after the first = in the value", () => {
 test("changedEnvKeys treats an empty previous dump as everything new", () => {
   expect(changedEnvKeys("", "A=1\nB=2\n")).toEqual(["A", "B"]);
 });
+
+test("changedEnvKeys ignores HOSTNAME, which Docker sets to the container id", () => {
+  expect(changedEnvKeys("HOSTNAME=abc123\nA=1\n", "HOSTNAME=def456\nA=1\n")).toEqual([]);
+  expect(changedEnvKeys("", "HOSTNAME=def456\nA=1\n")).toEqual(["A"]);
+});

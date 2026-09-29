@@ -1,7 +1,7 @@
 import { expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { DockerClient } from "../src/docker/DockerClient";
 import { GitainerServer } from "../src/git/GitainerServer";
-import { mkdirSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 const TEST_ROOT = "./tst/resources_envupdate";
 const SECRET_KEY = "GITAINER_ENV_UPDATE_TEST_SECRET";
@@ -81,6 +81,22 @@ test("env change used by no stack is recorded, so it is not reported again", asy
     restore();
   }
 
-  expect(logs).toContain("no diff detected");
-  expect(logs.some(line => line.includes(SECRET_KEY))).toBe(false);
+  // unchanged polls print nothing
+  expect(logs).toEqual([]);
+});
+
+test("env snapshots are readable only by their owner, including ones written before", async () => {
+  const lastSynthesizedEnvPath = TEST_ROOT + "/backend/data/lastSynthesizedEnv";
+  writeFileSync(lastSynthesizedEnvPath, "", { mode: 0o644 });
+  process.env[SECRET_KEY] = SECRET_VALUE;
+
+  const { restore } = captureLogs();
+  try {
+    await gitainer.checkForStackEnvUpdate();
+  } finally {
+    restore();
+  }
+
+  expect(statSync(TEST_ROOT + "/backend/data/tmpEnv").mode & 0o777).toBe(0o600);
+  expect(statSync(lastSynthesizedEnvPath).mode & 0o777).toBe(0o600);
 });

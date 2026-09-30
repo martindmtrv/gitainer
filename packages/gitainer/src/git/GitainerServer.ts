@@ -193,6 +193,11 @@ export class GitainerServer {
     return !!this.selfStackName && stackName === this.selfStackName;
   }
 
+  // where the detached self-update helper reports the recreate's outcome, see prepareSelfUpdate()
+  selfUpdateNotify(event: WebhookEventType): { url: string, title: string } | undefined {
+    return this.postWebhook ? { url: this.postWebhook, title: webhookTitle(event) } : undefined;
+  }
+
   async synthesisTime(shouldRevertOnFail: boolean, event: WebhookEventType, changes?: GitChange[], logger?: (msg: string) => void, oldrev?: string) {
     const log = (msg: string) => {
       console.log(msg);
@@ -326,7 +331,7 @@ export class GitainerServer {
           // response for this push is still in flight would abort it client-side even though
           // the update succeeded. The caller runs pendingSelfUpdateTriggers after the response
           // is fully sent.
-          pendingSelfUpdateTriggers.push(await this.docker.prepareSelfUpdate(hydratedCompose, stackName, false));
+          pendingSelfUpdateTriggers.push(await this.docker.prepareSelfUpdate(hydratedCompose, stackName, false, this.selfUpdateNotify(event)));
           continue;
         }
 

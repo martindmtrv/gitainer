@@ -134,6 +134,74 @@ test("composeSelfUpdate forwards gitainer's process env into the sibling for com
   }
 }, { timeout: 60_000 });
 
+// the sibling runs on the default bridge network, where the docker host (and so this test's
+// webhook listener) is reachable at the bridge's gateway, not at localhost
+async function bridgeGateway(): Promise<string> {
+  return (await $`docker network inspect bridge --format ${"{{ (index .IPAM.Config 0).Gateway }}"}`.quiet().text()).trim();
+}
+
+test("self-update sibling POSTs the recreate's outcome to the webhook", async () => {
+  const docker = new DockerClient();
+  const compose = await Bun.file(`${TEST_COMPOSE_ROOT}/self-stack-compose.yaml`).text();
+  const containerName = docker.selfUpdateContainerName("notifytest");
+  const webhookPort = 3190;
+  const postHelper = new NotifyWebhookTestHelper("/gitainer", webhookPort);
+
+  await $`docker rm -f selfstack-app-test`.quiet().catch(() => {});
+  await $`docker rm -f ${containerName}`.quiet().catch(() => {});
+
+  try {
+    const bodyPromise = new Promise<any>(resolve => { postHelper.callback = resolve; });
+    const trigger = await docker.prepareSelfUpdate(compose, "notifytest", true, {
+      url: `http://${await bridgeGateway()}:${webhookPort}/gitainer`,
+      title: "Gitainer: Git Push",
+    });
+    await trigger();
+
+    const body = await bodyPromise;
+    expect(body.title).toBe("Gitainer: Git Push");
+    expect(body.stackName).toBe("notifytest");
+    expect(body.msg).toBe("Successfully self-updated stack notifytest: the helper container recreated it");
+    expect(body.err).toBeUndefined();
+    await $`docker inspect selfstack-app-test --format {{.State.Running}}`.quiet().text();
+  } finally {
+    postHelper.listener.stop(true);
+    await $`docker rm -f selfstack-app-test`.quiet().catch(() => {});
+    await $`docker rm -f ${containerName}`.quiet().catch(() => {});
+  }
+}, { timeout: 60_000 });
+
+test("self-update sibling POSTs an err to the webhook when the recreate fails", async () => {
+  const docker = new DockerClient();
+  const compose = `services:\n  app:\n    image: gitainer-test/does-not-exist:"quoted"\n    container_name: selfstack-fail-test`;
+  const containerName = docker.selfUpdateContainerName("notifyfailtest");
+  const webhookPort = 3191;
+  const postHelper = new NotifyWebhookTestHelper("/gitainer", webhookPort);
+
+  await $`docker rm -f ${containerName}`.quiet().catch(() => {});
+
+  try {
+    const bodyPromise = new Promise<any>(resolve => { postHelper.callback = resolve; });
+    // skip the in-process pull, so the failure happens in the sibling's `up`
+    const trigger = await docker.prepareSelfUpdate(compose, "notifyfailtest", false, {
+      url: `http://${await bridgeGateway()}:${webhookPort}/gitainer`,
+      title: "Gitainer: Webhook",
+    });
+    await trigger();
+
+    const body = await bodyPromise;
+    expect(body.title).toBe("Gitainer: Webhook");
+    expect(body.stackName).toBe("notifyfailtest");
+    expect(body.msg).toBeUndefined();
+    expect(body.err).toStartWith("Self-update of stack notifyfailtest failed in the helper container");
+    expect(body.output).not.toBe("");
+  } finally {
+    postHelper.listener.stop(true);
+    await $`docker rm -f selfstack-fail-test`.quiet().catch(() => {});
+    await $`docker rm -f ${containerName}`.quiet().catch(() => {});
+  }
+}, { timeout: 60_000 });
+
 test("composeSelfUpdate rejects a stack with a #@ remote host comment", async () => {
   const docker = new DockerClient();
   const compose = `#@ root@192.0.2.1:/opt/stack\nservices:\n  app:\n    image: alpine`;

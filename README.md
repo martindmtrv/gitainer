@@ -336,6 +336,15 @@ With `GITAINER_SELF_STACK` set, a push that touches that stack pulls the new ima
 
 A few things to know:
 - **Fire-and-forget, no auto-rollback.** Once the helper container is launched, gitainer can't observe or roll back the outcome the way it does for other stacks - a broken self-update must be fixed forward with another push, not reverted automatically.
+- **The helper reports back.** With `POST_WEBHOOK` set, the helper POSTs the recreate's outcome there itself once it's done, as a second notification after the usual one from gitainer (which only says the update was handed off). The `title` matches what triggered it, and it carries the `docker compose up` output:
+  ```json
+  { "title": "Gitainer: Git Push", "stackName": "gitainer", "msg": "Successfully self-updated stack gitainer: the helper container recreated it", "output": "..." }
+  ```
+  or, if the recreate failed:
+  ```json
+  { "title": "Gitainer: Git Push", "stackName": "gitainer", "err": "Self-update of stack gitainer failed in the helper container (exit code 1): ...", "output": "..." }
+  ```
+  The helper runs on Docker's default bridge network, so `POST_WEBHOOK` has to be reachable from there: a compose service name only resolvable on gitainer's own network, or `localhost`, won't work.
 - **Deletes are protected.** Pushing a deletion of the self-stack is refused (the running container is left untouched) rather than silently tearing down the only thing that could push a fix. The refusal is reported as a `warnings` entry on the synthesis result / `POST_WEBHOOK` payload.
 - **No remote hosts.** A `#@` remote-host comment on the self-stack is rejected - gitainer can only self-update the host it's actually running on.
 - **Misconfiguration risk.** If `GITAINER_SELF_STACK` doesn't match gitainer's actual compose project, self-update protection silently doesn't apply and the original down-yourself problem can reoccur. Gitainer logs a startup warning on a mismatch it can detect, but double-check the name matches your deployment.

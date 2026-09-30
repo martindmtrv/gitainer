@@ -144,7 +144,7 @@ export class WebhookServer {
       // pull/stage) now, but only trigger the actual recreate once the response body has been
       // written out to the client's socket.
       try {
-        const trigger = await docker.prepareSelfUpdate(stackFile, stackName);
+        const trigger = await docker.prepareSelfUpdate(stackFile, stackName, true, this.gitainer.selfUpdateNotify(WebhookEventType.WEBHOOK));
         const outputText = "self-update handed off to a detached helper container";
 
         const res = {

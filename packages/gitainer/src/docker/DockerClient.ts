@@ -288,6 +288,7 @@ export class DockerClient {
   // at worst, so they're excluded from composeSelfUpdate's environment forwarding below.
   private static readonly SELF_UPDATE_ENV_FORWARD_DENYLIST = new Set([
     "PATH", "HOME", "HOSTNAME", "PWD", "OLDPWD", "SHLVL", "_", "STACK_NAME",
+    "SELF_UPDATE_WEBHOOK_URL", "SELF_UPDATE_WEBHOOK_TITLE",
   ]);
 
   /**
@@ -306,8 +307,11 @@ export class DockerClient {
    * process - if that happens while the git push's HTTP response is still in flight, the client
    * sees a broken/aborted push even though the update went through. Deferring the trigger until
    * after the response is sent avoids that race.
+   *
+   * With `notify`, the sibling POSTs the recreate's outcome to `notify.url` once it's done,
+   * since gitainer itself may not be around anymore to report it.
    */
-  async prepareSelfUpdate(composeString: string, stackName: string, pull: boolean = true): Promise<() => Promise<void>> {
+  async prepareSelfUpdate(composeString: string, stackName: string, pull: boolean = true, notify?: { url: string, title: string }): Promise<() => Promise<void>> {
     const config = extractRemoteHostConfig(composeString);
     if (config) {
       throw new Error(`Self-update stack "${stackName}" cannot use a remote host (#@) comment; gitainer can only self-update the host it is running on`);
@@ -334,6 +338,9 @@ export class DockerClient {
     const envForwarding = Object.keys(process.env)
       .filter(key => !DockerClient.SELF_UPDATE_ENV_FORWARD_DENYLIST.has(key))
       .flatMap(key => ["-e", key]);
+    const notifyEnv = notify
+      ? ["-e", `SELF_UPDATE_WEBHOOK_URL=${notify.url}`, "-e", `SELF_UPDATE_WEBHOOK_TITLE=${notify.title}`]
+      : [];
 
     // The hydrated compose is handed to the sibling as a real file rather than an env var
     // (avoids the ~128KB env var size limit), via `docker cp` instead of a bind mount: `cp`
@@ -342,7 +349,7 @@ export class DockerClient {
     // self-container-identification - it behaves the same whether gitainer runs bare or inside
     // a container. `create` (not `run`) so the file can be copied in before the entrypoint
     // executes; `--rm` still auto-removes the container once it exits, same as before.
-    await $`docker create --rm --name ${containerName} -v /var/run/docker.sock:/var/run/docker.sock ${envForwarding} -e STACK_NAME="${stackName}" ${helperImage} sh -c "${selfUpdateScript}"`;
+    await $`docker create --rm --name ${containerName} -v /var/run/docker.sock:/var/run/docker.sock ${envForwarding} ${notifyEnv} -e STACK_NAME="${stackName}" ${helperImage} sh -c "${selfUpdateScript}"`;
     await $`docker cp ${hydratedFilename} ${containerName}:/self-update.yaml`;
 
     return async () => {

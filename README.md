@@ -255,6 +255,10 @@ Anytime variable changes are detected, any consuming services will be redeployed
 
 Infisical wins. Its secrets override any key of the same name in Gitainer's `environment:` or a mounted `.env`. The `.env` mount is meant as a cutover path for existing env files (see [Porting an external `.env` file](#porting-an-external-env-file)): once a variable is in Infisical, remove it from `.env`.
 
+The exceptions are `SSH_AUTH_SOCK`, `HOME`, `USER`, `PATH` and `HOSTNAME`, which the processes Gitainer runs itself (ssh, docker, git) depend on. Infisical secrets with these names are ignored, with a warning. For example, a host's `SSH_AUTH_SOCK` in Infisical would point at a socket that doesn't exist inside the container, and every [remote host](#remote-docker-host) deploy would then fail with `Permission denied (publickey)`.
+
+A key deleted from Infisical is unset on the next successful fetch, and stacks using it are redeployed. If Gitainer's `environment:` or `.env` also sets the key, Gitainer logs a warning, because that value comes back on the next restart. Keys aren't unset when a fetch returns no secrets at all.
+
 #### Cache
 
 After each successful fetch, the secrets are written to `$GITAINER_DATA/infisicalCache.json` (readable only by its owner). If Infisical can't be reached (e.g. it sits behind a reverse proxy that is down), Gitainer applies the cached secrets with the same priority as a live fetch, so a restart or push during an outage still deploys stacks with their last known values instead of blank or `.env` ones. The file holds your secrets in plain text, as do the `lastSynthesizedEnv` and `tmpEnv` snapshots next to it (all written readable only by their owner), so treat `$GITAINER_DATA` (and its backups) accordingly. Keys deleted from Infisical stay in the cache until the next successful fetch replaces it.

@@ -1,6 +1,6 @@
 import { expect, test, describe, spyOn, afterEach } from "bun:test";
 import * as InfisicalProvider from "../src/infisical/InfisicalProvider";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -254,6 +254,139 @@ describe("InfisicalProvider", () => {
         getSecretsSpy.mockRestore();
         switchSpy.mockRestore();
         errorSpy.mockRestore();
+      });
+    });
+
+    describe("protected keys", () => {
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      afterEach(() => {
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      });
+
+      const protectedWarnings = (warnSpy: any) =>
+        warnSpy.mock.calls.filter(([msg]: [string]) => msg.includes('Ignoring secret "SSH_AUTH_SOCK"'));
+
+      test("ignores them in a live fetch, warns once per value, and keeps them out of the cache", async () => {
+        useDataDir();
+        process.env.SSH_AUTH_SOCK = "/ssh-agent";
+        let hostSocket = "/run/user/1000/ssh-agent.socket";
+        const getSecretsSpy = spyOn(InfisicalProvider, "getSecrets").mockImplementation(async () => [
+          secret("CACHED_SECRET", "v1"),
+          secret("SSH_AUTH_SOCK", hostSocket),
+        ]);
+        const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+        await InfisicalProvider.updateProcessEnv();
+        await InfisicalProvider.updateProcessEnv();
+
+        expect(process.env.SSH_AUTH_SOCK).toBe("/ssh-agent");
+        expect(process.env.CACHED_SECRET).toBe("v1");
+        expect(JSON.parse(readFileSync(join(dataDir, "infisicalCache.json"), "utf8"))).toEqual({ CACHED_SECRET: "v1" });
+        expect(protectedWarnings(warnSpy)).toHaveLength(1);
+
+        // a changed value is warned about again
+        hostSocket = "/run/user/1001/ssh-agent.socket";
+        await InfisicalProvider.updateProcessEnv();
+        expect(protectedWarnings(warnSpy)).toHaveLength(2);
+
+        getSecretsSpy.mockRestore();
+        warnSpy.mockRestore();
+      });
+
+      test("ignores them in a cache written before they were protected", async () => {
+        useDataDir();
+        writeFileSync(join(dataDir, "infisicalCache.json"), JSON.stringify({
+          CACHED_SECRET: "cached",
+          SSH_AUTH_SOCK: "/run/user/1002/ssh-agent.socket",
+        }));
+        process.env.SSH_AUTH_SOCK = "/ssh-agent";
+        const downSpy = spyOn(InfisicalProvider, "getSecrets").mockImplementation(async () => undefined);
+        const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = spyOn(console, "log").mockImplementation(() => {});
+
+        await InfisicalProvider.updateProcessEnv();
+
+        expect(process.env.SSH_AUTH_SOCK).toBe("/ssh-agent");
+        expect(process.env.CACHED_SECRET).toBe("cached");
+        expect(protectedWarnings(warnSpy)).toHaveLength(1);
+
+        downSpy.mockRestore();
+        warnSpy.mockRestore();
+        logSpy.mockRestore();
+      });
+    });
+
+    describe("keys deleted from Infisical", () => {
+      afterEach(() => {
+        delete process.env.DELETED_SECRET;
+      });
+
+      const fetchReturns = (secrets: any[]) =>
+        spyOn(InfisicalProvider, "getSecrets").mockImplementation(async () => secrets);
+
+      test("are unset", async () => {
+        useDataDir();
+        let getSecretsSpy = fetchReturns([secret("CACHED_SECRET", "v1"), secret("DELETED_SECRET", "gone-soon")]);
+        await InfisicalProvider.updateProcessEnv();
+        expect(process.env.DELETED_SECRET).toBe("gone-soon");
+        getSecretsSpy.mockRestore();
+
+        getSecretsSpy = fetchReturns([secret("CACHED_SECRET", "v1")]);
+        const logSpy = spyOn(console, "log").mockImplementation(() => {});
+
+        expect(await InfisicalProvider.updateProcessEnv()).toBe(true);
+        expect(process.env.DELETED_SECRET).toBeUndefined();
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"DELETED_SECRET" was deleted from Infisical'));
+        expect(JSON.parse(readFileSync(join(dataDir, "infisicalCache.json"), "utf8"))).toEqual({ CACHED_SECRET: "v1" });
+
+        getSecretsSpy.mockRestore();
+        logSpy.mockRestore();
+      });
+
+      test("are unset with a warning when .env also sets them, since that comes back on restart", async () => {
+        useDataDir();
+        process.env.DELETED_SECRET = "from-dotenv";
+        let getSecretsSpy = fetchReturns([secret("CACHED_SECRET", "v1"), secret("DELETED_SECRET", "from-infisical")]);
+        await InfisicalProvider.updateProcessEnv();
+        getSecretsSpy.mockRestore();
+
+        getSecretsSpy = fetchReturns([secret("CACHED_SECRET", "v1")]);
+        const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+        await InfisicalProvider.updateProcessEnv();
+
+        expect(process.env.DELETED_SECRET).toBeUndefined();
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"DELETED_SECRET" was deleted from Infisical, so it\'s unset now'));
+
+        getSecretsSpy.mockRestore();
+        warnSpy.mockRestore();
+      });
+
+      test("are warned about after a restart when .env still sets them", async () => {
+        useDataDir();
+        // the last run's fetch had it, this run's .env sets it
+        writeFileSync(join(dataDir, "infisicalCache.json"), JSON.stringify({ CACHED_SECRET: "v1", DELETED_SECRET: "from-infisical" }));
+        process.env.DELETED_SECRET = "from-dotenv";
+        const getSecretsSpy = fetchReturns([secret("CACHED_SECRET", "v1")]);
+        const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+        await InfisicalProvider.updateProcessEnv();
+
+        expect(process.env.DELETED_SECRET).toBe("from-dotenv");
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"DELETED_SECRET" was deleted from Infisical, but gitainer\'s environment or .env still sets it'));
+
+        // the cache no longer has it, so the next poll doesn't warn again
+        warnSpy.mockClear();
+        await InfisicalProvider.updateProcessEnv();
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        getSecretsSpy.mockRestore();
+        warnSpy.mockRestore();
       });
     });
 

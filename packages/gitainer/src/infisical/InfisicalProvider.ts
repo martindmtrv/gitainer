@@ -23,6 +23,11 @@ export const PROTECTED_KEYS = ["SSH_AUTH_SOCK", "HOME", "USER", "PATH", "HOSTNAM
 // `environment:` or .env), so a key deleted from Infisical can be unset again
 const appliedKeys = new Map<string, string | undefined>();
 
+/** The keys in process.env whose value currently comes from Infisical. */
+export function infisicalKeys(): string[] {
+  return [...appliedKeys.keys()];
+}
+
 // protected keys already warned about, with their value, so polls don't warn every minute
 const warnedProtected = new Map<string, string>();
 

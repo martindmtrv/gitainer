@@ -1,0 +1,8 @@
+# in-memory cache used by demo-web
+services:
+  cache:
+    image: alpine:latest
+    command: sleep infinity
+    stop_grace_period: 1s
+    environment:
+      CACHE_PASSWORD: ${CACHE_PASSWORD}

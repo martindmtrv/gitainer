@@ -1,0 +1,7 @@
+services:
+  postgres:
+    image: alpine:latest
+    command: sleep infinity
+    stop_grace_period: 1s
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}

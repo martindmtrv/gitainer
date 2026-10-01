@@ -3,6 +3,7 @@ import { GitainerServer } from '../git/GitainerServer';
 import { WebhookServer } from "../webhooks/WebhookServer";
 import { updateProcessEnv } from "../infisical/InfisicalProvider";
 import { parseBooleanEnv } from "./envUtils";
+import { EventStore } from "../store/EventStore";
 
 // load dynamic env from infisical
 await updateProcessEnv();
@@ -21,6 +22,7 @@ const gitainer = new GitainerServer(
   parseBooleanEnv(process.env.STACK_UPDATE_ON_ENV_CHANGE),
   process.env.POST_WEBHOOK as string,
   process.env.GITAINER_SELF_STACK,
+  new EventStore(`${process.env.GITAINER_DATA}/gitainer.sqlite`),
 );
 
 const bareRepo = await gitainer.initRepo();

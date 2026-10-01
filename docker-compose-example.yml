@@ -13,6 +13,7 @@ services:
       STACK_UPDATE_ON_ENV_CHANGE: 1
       # POST_WEBHOOK:
       # GITAINER_SELF_STACK: <name of the stack that is gitainer's own deployment>
+      # GITAINER_CLONE_URL: <git clone URL shown in the UI, defaults to http://<host>:3000/<REPO_NAME>.git>
       # GITAINER_SELF_UPDATE_HELPER_IMAGE: <defaults to the docker image gitainer is built on>
       # defaults
       # GIT_ROOT: /var/gitainer/repo

@@ -8,6 +8,8 @@ import { changedEnvKeys, readEnvSnapshot, writeEnvSnapshot } from '../server/env
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
 import { createInitialCommitWithReadme } from './gitUtils';
 import { WebhookEventType, webhookTitle } from '../webhooks/WebhookEventType';
+import type { DeployRecord, EventStore } from '../store/EventStore';
+import { recordDeployedEnv } from '../server/stackEnv';
 
 export class GitainerServer {
   readonly bareDir: string;
@@ -21,6 +23,8 @@ export class GitainerServer {
   readonly stackUpdateOnEnvChange: boolean;
   readonly postWebhook?: string;
   readonly selfStackName?: string;
+  // the history of events and deploys, if it's kept
+  readonly store?: EventStore;
 
   static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
 
@@ -48,11 +52,13 @@ export class GitainerServer {
     stackUpdateOnEnvChange: boolean = true,
     postWebhook?: string,
     selfStackName?: string,
+    store?: EventStore,
   ) {
     this.repoName = repoName;
     this.gitBranch = gitBranch;
     this.postWebhook = postWebhook;
     this.selfStackName = selfStackName;
+    this.store = store;
     this.gitainerDataPath = gitainerDataPath;
     this.stackUpdateOnEnvChange = stackUpdateOnEnvChange;
     this.fragmentsPath = fragmentsPath;
@@ -221,6 +227,15 @@ export class GitainerServer {
     let currentStack: string = "n/a";
     let hydratedCompose: string = 'n/a';
 
+    // what this synthesis did to each stack, for the event store
+    const deploys: DeployRecord[] = [];
+    const commit = await this.bareRepo.headCommit();
+    let stackStartedAt = new Date().toISOString();
+    let failedAction = "pull";
+    const recordDeploy = (stack: string, action: string, ok: boolean, output: string = "") => {
+      deploys.push({ stack, action, ok, output: output.trim(), commit, startedAt: stackStartedAt, finishedAt: new Date().toISOString() });
+    };
+
     log(`=== Synthesis starting ===`);
 
     const fragmentChanges = latestChanges
@@ -305,6 +320,7 @@ export class GitainerServer {
       // don't overlap the container churn (and reverse proxy reloads) of the deploys below
       for (const change of combinedStackChanges) {
         currentStack = change.file;
+        stackStartedAt = new Date().toISOString();
         const stackName = GitainerServer.stackPattern.exec(change.file)?.[1];
         // deletes and renames out of the stack pattern deploy nothing. The self stack is pulled
         // here too, so a bad gitainer image also fails before any other stack is touched
@@ -322,8 +338,10 @@ export class GitainerServer {
       }
 
       // apply each stack change
+      failedAction = "deploy";
       for (const change of combinedStackChanges) {
         currentStack = change.file;
+        stackStartedAt = new Date().toISOString();
         const isRename = change.type.toString().startsWith("R");
         const newStackName = GitainerServer.stackPattern.exec(change.file)?.[1];
         const oldStackName = change.oldFile ? GitainerServer.stackPattern.exec(change.oldFile)?.[1] : undefined;
@@ -363,6 +381,9 @@ export class GitainerServer {
           // the update succeeded. The caller runs pendingSelfUpdateTriggers after the response
           // is fully sent.
           pendingSelfUpdateTriggers.push(await this.docker.prepareSelfUpdate(hydratedCompose, stackName, false, this.selfUpdateNotify(event)));
+          // its outcome is only reported to POST_WEBHOOK, by the helper container
+          recordDeploy(stackName, "self-update", true, "self-update handed off to a detached helper container");
+          await recordDeployedEnv(this.store, stackName, hydratedCompose);
           continue;
         }
 
@@ -391,6 +412,10 @@ export class GitainerServer {
             disabledStacks.push(stackName);
           }
           if (!willRedeploy) {
+            if (oldContent) {
+              recordDeploy(stackName, "down", true);
+              await this.store?.clearStackEnv(stackName);
+            }
             continue;
           }
         } else {
@@ -406,7 +431,10 @@ export class GitainerServer {
         // We don't log the full compose file to the git client as it can be very long
         console.log(hydratedCompose);
 
-        await this.docker.composeUpdate(hydratedCompose, stackName, false);
+        const upOutput = await this.docker.composeUpdate(hydratedCompose, stackName, false);
+        // compose reports its progress on stderr
+        recordDeploy(stackName, "deploy", true, upOutput?.stderr?.toString());
+        await recordDeployedEnv(this.store, stackName, hydratedCompose);
         successfullyProcessedStacks.push({
           file: change.file,
           stackName,
@@ -436,6 +464,10 @@ export class GitainerServer {
         ...(skippedStacks.length ? { skippedStacks } : {}),
         ...(commentOnlyStacks.length ? { commentOnlyStacks } : {}),
       };
+      const failedStackName = GitainerServer.stackPattern.exec(currentStack)?.[1];
+      if (failedStackName) {
+        recordDeploy(failedStackName, failedAction, false, res.output);
+      }
       if (!shouldRevertOnFail) {
         res = {
           ...res,
@@ -473,16 +505,22 @@ export class GitainerServer {
 
         // Restore successful stacks to previous state
         for (const stack of successfullyProcessedStacks) {
+          stackStartedAt = new Date().toISOString();
           try {
             const oldContent = await this.bareRepo.getStack(stack.stackName, "HEAD");
             if (oldContent) {
               log(`Restoring ${stack.stackName} to previous state`);
               await this.docker.composeUpdate(oldContent, stack.stackName);
+              recordDeploy(stack.stackName, "rollback", true, "Restored to the previous commit");
+              await recordDeployedEnv(this.store, stack.stackName, oldContent);
             } else {
               log(`Stack ${stack.stackName} did not exist in previous state, leaving it down`);
+              recordDeploy(stack.stackName, "rollback", true, "Left down: it did not exist in the previous commit");
+              await this.store?.clearStackEnv(stack.stackName);
             }
           } catch (restoreError) {
             log(`Failed to restore stack ${stack.stackName}: ${restoreError}`);
+            recordDeploy(stack.stackName, "rollback", false, String(restoreError));
           }
         }
       }
@@ -491,6 +529,8 @@ export class GitainerServer {
     log("=== Synthesis end ===");
     res.title = webhookTitle(event);
     console.log(res);
+
+    await this.store?.recordEvent(event, res, deploys);
 
     if (this.postWebhook) {
       log(`== Sending POST to ${this.postWebhook} ==`);

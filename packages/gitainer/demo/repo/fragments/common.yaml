@@ -1,0 +1,4 @@
+x-common: &common
+  restart: unless-stopped
+  environment:
+    TZ: ${TZ:-UTC}

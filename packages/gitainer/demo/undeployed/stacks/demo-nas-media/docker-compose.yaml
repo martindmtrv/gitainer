@@ -1,0 +1,6 @@
+#@ root@10.255.0.1:/opt/stacks/media
+# a stack on a remote host that doesn't answer
+services:
+  jellyfin:
+    image: alpine:latest
+    command: sleep infinity

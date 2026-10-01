@@ -1,0 +1,8 @@
+# in the repo but not deployed, with a variable that isn't set
+services:
+  exporter:
+    image: alpine:latest
+    command: sleep infinity
+    stop_grace_period: 1s
+    environment:
+      SCRAPE_TOKEN: ${METRICS_TOKEN}

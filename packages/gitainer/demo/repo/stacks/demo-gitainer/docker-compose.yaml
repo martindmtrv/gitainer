@@ -1,0 +1,6 @@
+# stands in for gitainer's own stack (GITAINER_SELF_STACK), so the demo has a self-stack
+services:
+  gitainer:
+    image: alpine:latest
+    command: sleep infinity
+    stop_grace_period: 1s

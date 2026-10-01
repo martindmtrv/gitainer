@@ -1,0 +1,6 @@
+# kept down by an env var, see "Disabling a stack" in the README
+x-gitainer-disabled: ${DISABLE_LEGACY:-false}
+services:
+  old:
+    image: alpine:latest
+    command: sleep infinity

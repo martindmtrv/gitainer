@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Gitainer</title>
+  <!-- the page is served at every path of the UI (/stacks/web, ...): its files and API calls resolve from the root -->
+  <base href="/">
+  <link rel="icon" type="image/svg+xml" href="ui/icon.svg">
+  <link rel="stylesheet" href="ui/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/"><img src="ui/icon.svg" alt="" width="22" height="22">gitainer</a>
+      <nav>
+        <a href="/" data-nav="stacks">Stacks</a>
+        <a href="/env" data-nav="env">Env</a>
+        <a href="/history" data-nav="history">History</a>
+        <a href="/info" data-nav="info">Info</a>
+      </nav>
+      <button id="forget-key" class="btn quiet" hidden>Logout</button>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <dialog id="key-dialog">
+    <form method="dialog" id="key-form">
+      <h2>API key</h2>
+      <p>This Gitainer needs its <code>GITAINER_API_KEY</code>. It's kept for this browser tab only.</p>
+      <p id="key-error" class="error-text" hidden>That key was rejected.</p>
+      <input id="key-input" type="password" autocomplete="off" placeholder="API key" required>
+      <div class="dialog-actions">
+        <button class="btn primary" type="submit">Continue</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button class="btn" value="cancel" id="confirm-cancel">Cancel</button>
+        <button class="btn primary" value="confirm" id="confirm-ok"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="ui/app.js"></script>
+</body>
+</html>

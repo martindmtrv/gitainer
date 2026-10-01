@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- a git graph whose commits are containers: a main line and a branch joining it -->
+  <rect width="64" height="64" rx="14" fill="#0f6b5c"/>
+  <g fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round">
+    <path d="M22 24v16"/>
+    <path d="M43 33c0 10-21 2-21 10"/>
+  </g>
+  <g fill="#fff">
+    <rect x="14" y="10" width="16" height="15" rx="3.5"/>
+    <rect x="14" y="39" width="16" height="15" rx="3.5"/>
+    <rect x="35" y="19" width="16" height="15" rx="3.5"/>
+  </g>
+</svg>

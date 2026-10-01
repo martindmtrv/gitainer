@@ -26,6 +26,15 @@ export class GitConsumer {
     }
   }
 
+  /** The commit `main` points at, or undefined in an empty repo. */
+  async headCommit(): Promise<string | undefined> {
+    try {
+      return (await this.repo.revparse(['main'])).trim();
+    } catch (e) {
+      return undefined;
+    }
+  }
+
   async getAllStackNames(): Promise<string[]> {
     const stacks = await this.getAllStacks();
 

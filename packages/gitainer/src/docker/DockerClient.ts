@@ -241,17 +241,47 @@ function composeStringToTmp(composeString: string): string {
  * the file.
  */
 export async function composeVariables(composeString: string): Promise<string[]> {
+  return (await composeVariableDetails(composeString)).map(variable => variable.name);
+}
+
+export interface ComposeVariable {
+  name: string;
+  // `${VAR:-default}` with a non-empty default, so the stack still deploys with it unset
+  hasDefault: boolean;
+  // `${VAR:?err}`: compose refuses to deploy the stack with it unset
+  required: boolean;
+}
+
+/** composeVariables(), with whether each variable has a default or is required. */
+export async function composeVariableDetails(composeString: string): Promise<ComposeVariable[]> {
   const fileName = composeStringToTmp(composeString);
   try {
     const result = await $`docker compose -f ${fileName} config --variables --format json`.nothrow().quiet();
     if (result.exitCode !== 0) {
       throw new Error(`docker compose config failed (exit code ${result.exitCode}): ${result.stderr.toString().trim()}`);
     }
-    return Object.keys(JSON.parse(result.stdout.toString()) || {});
+    const variables: Record<string, { DefaultValue?: string, Required?: boolean }> = JSON.parse(result.stdout.toString()) || {};
+    return Object.entries(variables).map(([name, variable]) => ({
+      name,
+      hasDefault: !!variable.DefaultValue,
+      required: !!variable.Required,
+    }));
   } finally {
     rmSync(fileName, { force: true });
   }
 }
+
+export interface StackContainer {
+  name: string;
+  service: string;
+  // docker's container state: running, exited, restarting, ...
+  state: string;
+  // docker's human readable status, e.g. "Up 2 hours (healthy)"
+  status: string;
+}
+
+// how long a status lookup may take: an unreachable remote host would otherwise hang on ssh
+const STATUS_TIMEOUT_MS = 8_000;
 
 export class DockerClient {
   private composeStringToTmp(composeString: string): string {
@@ -596,6 +626,81 @@ export class DockerClient {
         const output = stderr || stdout;
         throw new Error(`Shutdown hook for stack "${stackName}" failed (exit code ${result.exitCode}): ${cmd}${output ? `\n${output}` : ''}`);
       }
+    }
+  }
+
+  /**
+   * The containers (running or stopped) of the compose projects on a host, by project name:
+   * of every project, or only `stackName`'s. `dockerHost` is a remote host from a `#@` comment,
+   * the local docker otherwise. Throws if docker doesn't answer within `timeoutMs`.
+   */
+  async listStackContainers(dockerHost?: string, stackName?: string, timeoutMs: number = STATUS_TIMEOUT_MS): Promise<Map<string, StackContainer[]>> {
+    const filter = `label=com.docker.compose.project${stackName ? `=${stackName}` : ''}`;
+    const format = ['{{.Label "com.docker.compose.project"}}', '{{.Label "com.docker.compose.service"}}', '{{.Names}}', '{{.State}}', '{{.Status}}'].join('\t');
+    const proc = Bun.spawn(['docker', 'ps', '-a', '--filter', filter, '--format', format], {
+      env: dockerHost ? { ...process.env, DOCKER_HOST: dockerHost } : process.env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, timeoutMs);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]).finally(() => clearTimeout(timer));
+    if (timedOut) {
+      throw new Error(`${dockerHost ?? 'docker'} didn't answer within ${timeoutMs / 1000}s`);
+    }
+    if (exitCode !== 0) {
+      throw new Error(`docker ps failed (exit code ${exitCode}): ${stderr.trim()}`);
+    }
+
+    const byProject = new Map<string, StackContainer[]>();
+    for (const line of stdout.split("\n").filter(Boolean)) {
+      const [project, service, name, state, status] = line.split("\t");
+      byProject.set(project, [...(byProject.get(project) ?? []), { name, service, state, status }]);
+    }
+    return byProject;
+  }
+
+  /**
+   * The compose file as it would deploy now, with env vars interpolated, from
+   * `docker compose config`. Compose normalises it, so comments are dropped. It holds every
+   * secret the stack reads. `prefix_entrypoint` is hydrated like a deploy does, or left out
+   * (with a note) if the image isn't there to inspect yet.
+   */
+  async composeResolved(composeString: string, stackName: string): Promise<string> {
+    const config = extractRemoteHostConfig(composeString);
+    const cmdEnv = config ? {
+      ...process.env,
+      DOCKER_HOST: config.dockerHost,
+      ...(config.composeProjectDir ? { COMPOSE_PROJECT_DIR: config.composeProjectDir } : {})
+    } : undefined;
+
+    let hydratedCompose: string;
+    let note = "";
+    try {
+      hydratedCompose = await this.preprocessCompose(composeString, cmdEnv as Record<string, string> | undefined);
+    } catch (e) {
+      hydratedCompose = this.stripPrefixEntrypoint(composeString);
+      note = "# prefix_entrypoint left out: its image couldn't be inspected, it's pulled on the next deploy\n";
+    }
+
+    const fileName = this.composeStringToTmp(hydratedCompose);
+    try {
+      const result = cmdEnv
+        ? await $`docker compose -f ${fileName} -p ${stackName} config`.env(cmdEnv).nothrow().quiet()
+        : await $`docker compose -f ${fileName} -p ${stackName} config`.nothrow().quiet();
+      if (result.exitCode !== 0) {
+        throw new Error(`docker compose config failed (exit code ${result.exitCode}): ${result.stderr.toString().trim()}`);
+      }
+      return (config ? `${composeString.split(/\r?\n/)[0].trim()}\n` : "") + note + result.stdout.toString();
+    } finally {
+      rmSync(fileName, { force: true });
     }
   }
 

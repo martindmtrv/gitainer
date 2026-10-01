@@ -11,6 +11,7 @@ Simple Git-based container management platform for Docker Standalone
 - Keep a stack down without deleting it via `x-gitainer-disabled: true`, or from an env var
 - Comment-only changes to a compose file or fragment don't redeploy the stack
 - Lightweight HTTP API to trigger stack actions from CI/CD pipelines
+- Small [manager UI](#manager-ui) to see stacks, run stack actions and inspect the env
 - POST webhook option for update responses
 
 ## Usage
@@ -34,6 +35,7 @@ services:
       # STACK_UPDATE_ON_ENV_CHANGE: 1 # 1/true/yes/on enables, anything else (incl. 0) disables
       # POST_WEBHOOK: <some POST endpoint>
       # GITAINER_SELF_STACK: <name of the stack that is gitainer's own deployment, see Self-Updating Gitainer>
+      # GITAINER_CLONE_URL: <git clone URL shown in the UI, defaults to http://<host>:3000/<REPO_NAME>.git>
       # GITAINER_SELF_UPDATE_HELPER_IMAGE: <defaults to the docker image gitainer is built on>
       # defaults
       # GIT_ROOT: /var/gitainer/repo
@@ -68,7 +70,7 @@ git push
 
 If `POST_WEBHOOK` is set, Gitainer will send an HTTP POST with a `Content-Type: application/json` header to that URL after a stack update completes. The body is the plain JSON result object itself (not a string-wrapped copy) — parse it directly as JSON.
 
-Every payload includes a `title` field so you can tell which of the three triggers fired it: `"Gitainer: Git Push"`, `"Gitainer: Env Update"`, or `"Gitainer: Webhook"`. The `msg`/`err` field is a self-contained status string that names the affected stack(s), so you don't need to also inspect `changes`/`stackName`/`output` just to know what happened — handy if you're feeding this straight into a notifier.
+Every payload includes a `title` field so you can tell which trigger fired it: `"Gitainer: Git Push"`, `"Gitainer: Env Update"`, `"Gitainer: Webhook"`, or `"Gitainer: UI"` for a stack action started from the [manager UI](#manager-ui). The `msg`/`err` field is a self-contained status string that names the affected stack(s), so you don't need to also inspect `changes`/`stackName`/`output` just to know what happened — handy if you're feeding this straight into a notifier.
 
 There are two triggers for this webhook, each with a slightly different payload shape:
 
@@ -156,6 +158,8 @@ On failure from an env-change-triggered resynthesis (no commit to roll back), th
 
 They respond, stream keepalives and notify `POST_WEBHOOK` like the API-triggered update above, with `msg` reading `Successfully downed/started/restarted stack <name>: ...`. An unknown stack responds with a 404. The [self-stack](#self-updating-gitainer) is refused with a 400, since downing it would kill Gitainer itself; update it with `POST /api/stacks/:stackName` instead. A [disabled](#disabling-a-stack) stack can be downed, but `up`, `restart` and `POST /api/stacks/:stackName` refuse it with a 400.
 
+Only one of these actions (the update included) runs on a stack at a time: a second one on the same stack while the first is still running is refused with a 409.
+
 **Bulk stop/start by label** (`POST /api/labels/:identifier/stop`, `POST /api/labels/:identifier/start`, `title: "Gitainer: Webhook"`) stops or starts every container labelled `gitainer.identifier=<identifier>`, regardless of which stack it belongs to. Only fires the webhook on success — a docker error responds to the caller with a 400 and `{ "err": "..." }`, but does not notify `POST_WEBHOOK`:
 ```json
 {
@@ -207,13 +211,71 @@ The built-in `/api/registry/:containerName/cleanup` endpoint above covers the co
 POST_WEBHOOK=https://apprise.example.com/notify/gitainer?:msg=body&:err=body
 ```
 
-`title` doesn't need remapping — Apprise API already reads a top-level `title` key by default, and Gitainer's payload already has one, so `Gitainer: Git Push` / `Gitainer: Env Update` / `Gitainer: Webhook` shows up as the notification title automatically.
+`title` doesn't need remapping — Apprise API already reads a top-level `title` key by default, and Gitainer's payload already has one, so `Gitainer: Git Push` / `Gitainer: Env Update` / `Gitainer: Webhook` / `Gitainer: UI` shows up as the notification title automatically.
 
 In docker-compose, quote the value since it contains `?`, `&`, and `:`:
 ```yaml
 environment:
   POST_WEBHOOK: "https://apprise.example.com/notify/gitainer?:msg=body&:err=body"
 ```
+
+### Manager UI
+
+Gitainer serves a small UI on port 8080 (`http://<host>:8080/`) to operate the stacks in the repo. Editing them still happens in git. Its pages have their own addresses (`/stacks/mystack`, `/env`, ...), so behind a reverse proxy it has to be served at the root of its hostname, not under a sub-path.
+
+- **Stacks** shows the repo's git clone URL with a copy button, and lists every stack with its container states, and badges for a [stale env](#stale-env), the [self-stack](#self-updating-gitainer), [disabled](#disabling-a-stack) stacks and [remote hosts](#remote-docker-host). The buttons call the update / restart / up / down endpoints above, with the same guards: the self-stack can only be updated, a disabled stack only downed.
+- **A stack's page** shows its containers, its compose file with fragments expanded, the variables it reads (with the unset ones flagged) and its recent deploys with their output. The compose file is shown without env values by default; "With envs" shows it interpolated.
+- **Env** lists the keys of Gitainer's environment: whether each comes from [Infisical](#infisical-secrets) or the container, and which stacks read it, marking the ones with a [stale](#stale-env) value of it. Values are masked and revealed one key at a time. Variables that stacks read but that aren't set are listed separately.
+- **Info** lists Gitainer's own settings (the env vars it reads) with a short description of each and its current value. Values that can hold credentials aren't shown there: `POST_WEBHOOK`, `GITAINER_COMMANDS` and `INFISICAL_CLIENT_ID` link to the Env page to be revealed, and the API key and Infisical client secret are never shown.
+- **History** lists what Gitainer did, newest first: every push, env update and API call, with the deploys each one made and its full result.
+
+The clone URL defaults to `http://<the host the UI is opened at>:3000/<REPO_NAME>.git`. Set `GITAINER_CLONE_URL` if the git server is reached differently, e.g. through a reverse proxy or on another host port.
+
+If `GITAINER_API_KEY` is set, the UI asks for it once and keeps it for the browser tab (in `sessionStorage`). Without an API key the UI works, but shows no env values: an open API would otherwise hand every secret to anyone who can reach port 8080.
+
+The UI is static files calling these endpoints, which are also usable on their own:
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/info` | `repoName`, `branch`, and `cloneUrl` if `GITAINER_CLONE_URL` is set. |
+| `GET /api/settings` | Gitainer's own settings: `key`, `group`, `description`, `default` (what the image sets), `set`, `visibility` (`plain`, `reveal` or `hidden`), the `value` of the `plain` ones, and `enabled` for on/off settings. |
+| `GET /api/stacks` | Every stack: `name`, `self`, `disabled`, `remoteHost`, its `containers` (`name`, `service`, `state`, `status`), the action in flight (`busy`) and `staleEnv`, the variables it was deployed with another value of. A docker host that doesn't answer within 8 seconds leaves `containers` out and sets `statusErr`. `?status=local` skips the remote hosts. |
+| `GET /api/stacks/:stackName/status` | The same, for one stack. |
+| `GET /api/stacks/:stackName` | The compose file with fragments expanded and `${VARS}` left as they are. |
+| `GET /api/stacks/:stackName/resolved` | The compose file with env values interpolated, from `docker compose config`: what would deploy now, which isn't necessarily what is running. Compose normalises it, so comments are dropped. 403 unless an API key is configured. |
+| `GET /api/stacks/:stackName/variables` | The variables the stack reads: `name`, `set`, `hasDefault`, `required`. No values. |
+| `GET /api/env` | `env`: every key with its `source` (`infisical` or `container`), the `stacks` reading it, and the `staleStacks` deployed with another value of it. `unset`: variables stacks read that aren't set. No values. |
+| `GET /api/env/:key` | One value. 403 unless an API key is configured, and always for `GITAINER_API_KEY`, `WEBHOOK_API_KEY` and `INFISICAL_CLIENT_SECRET`. |
+| `GET /api/events` | The stored [history](#history), newest first: `type` (`Git Push`, `Env Update`, `Webhook` or `UI`), `ok`, `message`, `createdAt`, the `payload` and its `deploys`. `?limit=` defaults to 50, up to 500. |
+| `GET /api/deploys` | The stored deploys, newest first: `stack`, `action`, `ok`, `output`, `trigger`, `commit`, `startedAt`, `finishedAt`. `?stack=` narrows it to one stack, `?limit=` as above. |
+
+#### Stale env
+
+A running stack has a stale env when a variable it reads has changed since the stack was last deployed: it's still running with the old value. With `STACK_UPDATE_ON_ENV_CHANGE` on, Gitainer redeploys such a stack by itself, so this mostly shows when that's off or the redeploy failed. The stack gets a "stale env" badge naming the variables, and updating, restarting or upping it applies the current values and clears it.
+
+Gitainer knows this from a hash of each variable's value, stored in the [history](#history) database at every deploy. A stack that hasn't been deployed since this was added has nothing stored, and isn't flagged until its next deploy.
+
+#### Demo instance
+
+To try the UI without a real deployment, `packages/gitainer` has a script that runs Gitainer from the checkout with a few throwaway stacks (in `packages/gitainer/demo`) deployed on the local docker. It needs `bun` and `docker`, and ports 3000 and 8080 free:
+
+```
+cd packages/gitainer
+bun run demo           # sets it up from scratch and prints the URL and API key
+bun run demo:tunnel    # the same, and shares the UI as a public URL through localtunnel (lt)
+bun run demo:cleanup   # stops it and removes its containers, networks and files
+```
+
+The server runs with a clean environment, so the Env page shows only the demo's made-up variables. The demo covers a self-stack, a disabled stack, an undeployed one, a remote host that doesn't answer, a failed push in the history and a stale env. The API key is `demo`; `GITAINER_API_KEY` sets another one, and `GITAINER_DEMO_DIR` where its files go (default `$TMPDIR/gitainer-demo`).
+
+#### History
+
+Gitainer keeps what it did in a SQLite database, `gitainer.sqlite` in `GITAINER_DATA` (`/var/gitainer/data`): mount that directory as a volume to keep the history across container recreates. While Gitainer runs, the database has `gitainer.sqlite-wal` and `-shm` files beside it; back the three up together, or stop Gitainer first.
+
+- **Events** are the results described under [POST Webhook](#post-webhook), stored as they're sent. Failed API calls are stored too, although they aren't sent to `POST_WEBHOOK`.
+- **Deploys** are what an event did to each stack, with the command's output and the commit `main` was at. A push or env update records `deploy`, `down` (a deleted or disabled stack), `pull` (a failed pull), `rollback` and `self-update`; the API records `update`, `up`, `down` and `restart`. Actions started from the UI have the type `UI` (and the title `Gitainer: UI` in `POST_WEBHOOK`) instead of `Webhook`: the UI marks its requests with an `X-Gitainer-Source: ui` header.
+
+A self-update is stored as handed off: the recreate's outcome is only [reported to `POST_WEBHOOK`](#self-updating-gitainer) by the helper container. The newest 2,000 events and 10,000 deploys are kept. Compose files in a payload are stored as they are in git, with their `${VARS}`, so the database holds no env values, only the hashes used to tell a [stale env](#stale-env). The file is readable only by its owner.
 
 ### Variables
 
@@ -617,9 +679,9 @@ This was a clunky solution for many reasons and I ultimately came to the conclus
 
 ## example integrations
 
-Gitainer does not provide a UI for access, but does play well with other existing tools for this.
+Gitainer's [manager UI](#manager-ui) covers stack status, stack actions and the env. It has no git editor, logs or container-level actions, but Gitainer plays well with other existing tools for these.
 
-Keep your compose files managed Gitainer for editing / deployments and handle operations with other tooling.
+Keep your compose files managed by Gitainer for editing / deployments and handle the rest with other tooling.
 
 This is not an exhaustive list but just a shortlist of things that I am experimenting with to improve my own homelab.
 

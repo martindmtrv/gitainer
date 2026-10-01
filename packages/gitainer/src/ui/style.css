@@ -8,6 +8,8 @@
   --muted: #666b66;
   --accent: #0f6b5c;
   --accent-text: #ffffff;
+  --clone: #1f883d;
+  --clone-hover: #1a7f37;
   --ok: #1f8a4c;
   --warn: #a8660a;
   --bad: #b3261e;
@@ -30,6 +32,8 @@
     --muted: #979d98;
     --accent: #4fc3ad;
     --accent-text: #0c1513;
+  --clone: #238636;
+  --clone-hover: #2ea043;
     --ok: #57c785;
     --warn: #e0a341;
     --bad: #f0837a;
@@ -79,7 +83,12 @@ main { padding-top: 28px; padding-bottom: 64px; }
 
 .page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
 .page-head .spacer { flex: 1; }
-.crumb { color: var(--muted); font-size: 13px; margin-bottom: 6px; display: block; }
+.head-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.head-actions.below { flex-basis: 100%; justify-content: flex-end; }
+/* the name with its badges and status: they wrap among themselves, beside what ends their line */
+.head-title { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; flex: 1; min-width: 0; }
+.head-title h1 { overflow-wrap: anywhere; }
+.page-head:has(> .head-title) { align-items: flex-start; }
 
 section { margin-top: 28px; }
 .section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -88,7 +97,7 @@ section { margin-top: 28px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 
 .muted { color: var(--muted); }
-.empty { padding: 28px 20px; color: var(--muted); text-align: center; }
+.empty { padding: 28px 20px; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
 
 /* buttons */
 
@@ -106,15 +115,25 @@ section { margin-top: 28px; }
 }
 .btn:hover:not(:disabled) { border-color: var(--muted); }
 .btn:disabled { opacity: 0.45; cursor: default; }
-.btn:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:focus-visible, input:focus-visible, a:focus-visible, .menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn.icon { padding: 0; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
-.btn.icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+/* an icon with its name beside it */
+.btn.labelled { height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.btn.icon svg, .btn.labelled svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .btn.icon.done { color: var(--ok); border-color: var(--ok); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.danger { color: var(--bad); }
 .btn.quiet { border-color: transparent; background: none; color: var(--muted); }
 .btn.quiet:hover:not(:disabled) { color: var(--text); border-color: transparent; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* buttons joined into one, for actions that are variants of each other */
+.btn-group { display: inline-flex; flex: none; }
+.btn-group .btn { border-radius: 0; }
+.btn-group .btn:first-child { border-radius: 6px 0 0 6px; }
+.btn-group .btn:last-child { border-radius: 0 6px 6px 0; }
+.btn-group .btn:only-child { border-radius: 6px; }
+.btn-group .btn + .btn { margin-left: -1px; }
+.btn-group .btn:hover:not(:disabled), .btn-group .btn:focus-visible { position: relative; z-index: 1; }
 
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
 .segmented button { font: inherit; font-size: 13px; padding: 4px 11px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
@@ -175,6 +194,7 @@ td.right, th.right { text-align: right; }
 td.right .actions { justify-content: flex-end; flex-wrap: nowrap; }
 .stack-name { font-family: var(--mono); font-weight: 600; font-size: 14px; color: var(--text); white-space: nowrap; }
 td.mono { white-space: nowrap; }
+.row-containers { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; }
 .row-note { font-size: 12.5px; color: var(--bad); margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
 
 /* notices */
@@ -228,14 +248,35 @@ details.dropdown > summary { display: inline-flex; align-items: center; gap: 5px
 details.dropdown > summary::-webkit-details-marker { display: none; }
 details.dropdown > summary svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 details.dropdown[open] > summary { border-color: var(--muted); }
+/* green, like the clone button of a git forge */
+.btn.clone-button, details.dropdown[open] > summary.clone-button { background: var(--clone); border-color: var(--clone); color: #ffffff; }
+.btn.clone-button:hover, details.dropdown[open] > summary.clone-button { background: var(--clone-hover); border-color: var(--clone-hover); }
 .dropdown-panel {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 10;
-  width: min(360px, calc(100vw - 28px)); padding: 12px 14px;
+  width: min(280px, calc(100vw - 28px)); padding: 12px 14px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
 }
 .dropdown-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .dropdown-hint { font-size: 12.5px; margin-top: 8px; }
+/* a dropdown that's a list of options to pick one of */
+.dropdown-panel.menu { width: min(200px, calc(100vw - 28px)); padding: 6px; }
+/* a long label doesn't push the buttons beside it off the page */
+details.dropdown > summary .picked { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) { details.dropdown > summary .picked { max-width: 7ch; } }
+.dropdown-panel.menu .dropdown-title { padding: 6px 8px 2px; margin-bottom: 4px; }
+.dropdown-panel.menu .dropdown-hint { padding: 6px 8px 4px; margin-top: 4px; border-top: 1px solid var(--border); }
+.dropdown-hint .mono { font-size: 12px; }
+.menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px;
+  font: inherit; font-size: 13px; text-align: left; color: var(--text);
+  background: none; border: 0; border-radius: 6px; cursor: pointer;
+}
+.menu-item:hover { background: var(--sunken); }
+.menu-item[aria-pressed="true"] { font-weight: 600; }
+.menu-item svg, .menu-gap { width: 14px; height: 14px; flex: none; }
+.menu-item svg { fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.menu-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack-links a.stale { display: inline-flex; gap: 5px; align-items: center; }
 .stack-links { display: flex; gap: 10px; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
 
@@ -312,11 +353,6 @@ details.raw pre.code { border: 1px solid var(--border); border-radius: 8px; }
   .setting { flex-direction: column; }
   .setting-side { max-width: 100%; text-align: left; }
 
-  /* a dropdown spans the page's width, under the heading, instead of hanging off its button */
-  .page-head { position: relative; }
-  details.dropdown { position: static; }
-  .dropdown-panel { left: 0; right: 0; width: auto; }
-
   /* the stacks table on a phone: the name and status on one line, the actions under them */
   .stacks-table, .stacks-table tbody { display: block; }
   .stacks-table thead { display: none; }
@@ -327,7 +363,10 @@ details.raw pre.code { border: 1px solid var(--border); border-radius: 8px; }
   .stacks-table tr:last-child { border-bottom: 0; }
   .stacks-table td { display: block; padding: 0; border: 0; min-width: 0; }
   .stacks-table td.right { grid-column: 1 / -1; }
-  .stacks-table td.right .actions { justify-content: flex-start; }
+  .stacks-table td.right .actions { flex-wrap: wrap; }
+  /* a stack's actions are taller, for a finger */
+  .btn.labelled { height: 38px; }
+  .actions .btn-group ~ .btn.icon { width: 38px; height: 38px; }
   .stacks-table tr.clickable:hover td { background: none; }
   .stacks-table tr.clickable:hover { background: var(--sunken); }
 

@@ -20,8 +20,9 @@ function h(tag, attrs, ...children) {
 
 // the icons of the buttons, as the path data of a 24x24 stroked svg
 const ICONS = {
-  update: "M12 3v12M7 10l5 5 5-5M5 21h14",
   restart: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6",
+  // the restart's arrow, with a download in it: a restart that pulls first
+  update: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6M12 8v8M9 13l3 3 3-3",
   up: "M7 4l13 8-13 8z",
   down: "M6 6h12v12H6z",
   refresh: "M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5",
@@ -48,9 +49,20 @@ function iconButton(name, label, attrs = {}) {
   return h("button", { ...attrs, class: `btn icon ${attrs.class || ""}`.trim(), title: label, "aria-label": label }, icon(name));
 }
 
-// replaces the page, skipping the `condition && node` children that came out falsy
+// replaces the page, skipping the `condition && node` children that came out falsy. A page that's
+// built again keeps what the reader did to its elements with a `data-keep` key: how far a block
+// was scrolled, and whether a <details> was open
 function show(...children) {
+  const kept = new Map([...view.querySelectorAll("[data-keep]")].map(el =>
+    [el.dataset.keep, { top: el.scrollTop, left: el.scrollLeft, open: el.open }]));
   view.replaceChildren(...children.flat(Infinity).filter(child => child !== undefined && child !== null && child !== false));
+  for (const el of view.querySelectorAll("[data-keep]")) {
+    const state = kept.get(el.dataset.keep);
+    if (!state) continue;
+    if (state.open) el.open = true;
+    el.scrollTop = state.top;
+    el.scrollLeft = state.left;
+  }
 }
 
 // asks before an action, in a modal. Resolves to whether it was confirmed
@@ -158,14 +170,15 @@ const pending = new Map();
 // the outcome of the last action per stack, shown until dismissed
 const outcomes = new Map();
 
+// restart and update are shown joined: both down the stack and bring it up with new containers
 const ACTIONS = [
   {
-    id: "update", label: "Update", path: "", title: "Update: pull images, then down and up",
-    confirm: "Pulls the stack's images, then takes it down and brings it back up. Its containers are recreated, with the current values of its env variables.",
+    id: "restart", label: "Restart", path: "/restart", title: "Restart: down, then up --force-recreate, without pulling", group: "recreate",
+    confirm: "Takes the stack down and brings it back up with new containers, without pulling images. The current values of its env variables are applied.",
   },
   {
-    id: "restart", label: "Restart", path: "/restart", title: "Restart: down, then up --force-recreate, without pulling",
-    confirm: "Takes the stack down and brings it back up with new containers, without pulling images. The current values of its env variables are applied.",
+    id: "update", label: "Update", path: "", title: "Update: pull images, then down and up", group: "recreate",
+    confirm: "Pulls the stack's images, then takes it down and brings it back up. Its containers are recreated, with the current values of its env variables.",
   },
   { id: "up", label: "Up", path: "/up", title: "Up: docker compose up -d" },
   {
@@ -174,13 +187,18 @@ const ACTIONS = [
   },
 ];
 
-// the same guards the API applies: the self-stack can only be updated, a disabled one only downed
-function allowedActions(stack) {
-  if (stack.self) return ACTIONS.filter(action => action.id === "update" && !stack.disabled);
-  // a disabled stack is normally down already. It only needs the button if it still has
-  // containers (e.g. the flag came from an env var and env updates are off), or its state is unknown
-  if (stack.disabled) return ACTIONS.filter(action => action.id === "down" && (!stack.containers || stack.containers.length > 0));
-  return ACTIONS;
+// why an action can't be run on a stack, if it can't: the same guards the API applies. Its button
+// is still shown, disabled, with this as its tooltip
+function actionBlocked(stack, action) {
+  if (stack.disabled) {
+    if (action.id !== "down") return "This stack is disabled (x-gitainer-disabled), so it can only be downed";
+    if (stack.self) return "Gitainer's own stack can't be downed: that would stop Gitainer";
+    // a disabled stack is normally down already. It only has something to down if it still has
+    // containers (e.g. the flag came from an env var and env updates are off), or its state is unknown
+    return stack.containers && stack.containers.length === 0 ? "This stack is already down" : undefined;
+  }
+  if (stack.self && action.id !== "update") return "Gitainer's own stack can only be updated";
+  return undefined;
 }
 
 // a remote stack from the list, whose state is still being fetched on its own
@@ -209,6 +227,20 @@ function statusEl(stack) {
   return h("span", { class: `status ${status.kind}`, title: status.title }, h("span", { class: "dot" }), status.text);
 }
 
+function containerStateKind(container) {
+  return container.state === "running" ? (/unhealthy/.test(container.status) ? "warn" : "ok") : "bad";
+}
+
+// the `gitainer.identifier` labels among the stacks' containers, with how many containers have
+// each: the groups that /api/labels/:identifier/stop and /start act on
+function identifierCounts(stacks) {
+  const counts = new Map();
+  for (const container of stacks.flatMap(stack => stack.containers || [])) {
+    if (container.identifier) counts.set(container.identifier, (counts.get(container.identifier) ?? 0) + 1);
+  }
+  return new Map([...counts].sort(([a], [b]) => a.localeCompare(b)));
+}
+
 // the variables a running stack has old values of. A stack with no containers has nothing stale
 function staleEnv(stack) {
   return stack.containers && stack.containers.length > 0 && stack.staleEnv ? stack.staleEnv : [];
@@ -229,14 +261,25 @@ function badgesEl(stack) {
 
 function actionButtons(stack, rerender) {
   const busy = pending.get(stack.name) || stack.busy;
-  return h("div", { class: "actions" }, allowedActions(stack).map(action =>
-    h("button", {
-      class: `btn icon${action.danger ? " danger" : ""}`,
-      title: action.title,
+  // every stack has every button, so they line up: one that doesn't apply is disabled and says why
+  const button = (action) => {
+    const blocked = actionBlocked(stack, action);
+    return h("button", {
+      // restart and update are named: their icons alone are too alike to tell apart
+      class: `btn ${action.group ? "labelled" : "icon"}${action.danger ? " danger" : ""}`,
+      title: blocked || action.title,
       "aria-label": action.label,
-      disabled: !!busy || !!stack.err,
+      disabled: !!busy || !!stack.err || !!blocked,
       onclick: () => runAction(stack.name, action, rerender),
-    }, icon(action.id))));
+    }, icon(action.id), action.group && action.label);
+  };
+
+  return h("div", { class: "actions" }, ACTIONS.map((action, index) => {
+    if (!action.group) return button(action);
+    // the group is one element, made where its first action is
+    if (ACTIONS[index - 1]?.group === action.group) return null;
+    return h("div", { class: "btn-group", role: "group" }, ACTIONS.filter(other => other.group === action.group).map(button));
+  }));
 }
 
 async function runAction(name, action, rerender) {
@@ -320,15 +363,22 @@ async function loadCloneUrl() {
 // whether the clone dropdown is open: the page is rebuilt on every refresh, which would close it
 let cloneOpen = false;
 
-// a "Clone" button that drops down a panel with the repo's url and a copy button
-function cloneDropdown() {
-  return h("details", { class: "dropdown", open: cloneOpen, ontoggle: event => { cloneOpen = event.target.open; } },
-    h("summary", { class: "btn" }, "Clone", icon("caret")),
+// a "Clone" button that drops down a panel with the repo's url and a copy button. The button is
+// there even if the url couldn't be loaded with the page: opening the panel asks for it again
+function cloneDropdown(rerender) {
+  const toggled = (event) => {
+    cloneOpen = event.target.open;
+    if (cloneOpen && !cloneUrl) loadCloneUrl().then(rerender, () => {});
+  };
+  return h("details", { class: "dropdown", open: cloneOpen, ontoggle: toggled },
+    h("summary", { class: "btn clone-button" }, "Clone", icon("caret")),
     h("div", { class: "dropdown-panel" },
       h("div", { class: "dropdown-title" }, "Clone the stacks repo"),
-      h("div", { class: "clone" },
-        h("input", { class: "env-value", readonly: true, value: cloneUrl, "aria-label": "Git clone URL", onfocus: event => event.target.select() }),
-        h("div", { class: "actions" }, iconButton("copy", "Copy the git clone URL", { onclick: event => copyValue(event.currentTarget, cloneUrl) }))),
+      cloneUrl
+        ? h("div", { class: "clone" },
+          h("input", { class: "env-value", readonly: true, value: cloneUrl, "aria-label": "Git clone URL", onfocus: event => event.target.select() }),
+          h("div", { class: "actions" }, iconButton("copy", "Copy the git clone URL", { onclick: event => copyValue(event.currentTarget, cloneUrl) })))
+        : h("div", { class: "muted" }, "Couldn't load the clone URL. Close and open this to try again."),
       h("div", { class: "dropdown-hint muted" }, "A push to it deploys the stacks it changes.")));
 }
 
@@ -346,9 +396,46 @@ document.addEventListener("keydown", event => {
   });
 });
 
-async function stacksPage(isCurrent) {
+// how often the stacks page loads its list again, and how often while an action is in flight
+const POLL_MS = 10_000;
+const BUSY_POLL_MS = 4000;
+
+async function stacksPage(query, isCurrent) {
   let stacks;
   let timer;
+  // what the page was last built from: a poll that finds the same leaves the page alone
+  let rendered;
+  // whether the label dropdown is open: like the clone one, it's rebuilt with the page
+  let labelOpen = false;
+  // the gitainer.identifier the list is narrowed to. It's in the address, so it survives a
+  // reload and can be linked to
+  let label = query.get("label") || "";
+
+  const setLabel = (value) => {
+    label = value;
+    history.replaceState(null, "", label ? `/?label=${encodeURIComponent(label)}` : "/");
+    labelOpen = false;
+    render();
+  };
+
+  // a "Gitainer ID" button that drops down the gitainer.identifier labels to narrow the list to
+  const labelDropdown = (labels) => {
+    const option = (value, text, count) => h("button", { class: "menu-item", "aria-pressed": String(value === label), onclick: () => setLabel(value) },
+      value === label ? icon("check") : h("span", { class: "menu-gap" }),
+      h("span", { class: "menu-text" }, text),
+      count !== undefined && h("span", { class: "muted" }, String(count)));
+
+    return h("details", { class: "dropdown", open: labelOpen, ontoggle: event => { labelOpen = event.target.open; } },
+      h("summary", { class: "btn", title: "Show only the containers with a gitainer.identifier label" },
+        label ? ["Gitainer ID: ", h("span", { class: "mono picked" }, label)] : "Gitainer ID", icon("caret")),
+      h("div", { class: "dropdown-panel menu" },
+        h("div", { class: "dropdown-title" }, "Filter by Gitainer ID"),
+        option("", "All containers"),
+        // the one from the address is listed even if no container has it, so it can be seen and cleared
+        [...new Set([...labels.keys(), ...(label ? [label] : [])])].map(identifier =>
+          option(identifier, identifier, labels.get(identifier) ?? 0)),
+        h("div", { class: "dropdown-hint muted" }, "The ", h("span", { class: "mono" }, "gitainer.identifier"), " label of containers, not any other label.")));
+  };
   // the last state loaded for each remote stack, shown while it's being fetched again
   const remoteStates = new Map();
   const fetching = new Set();
@@ -358,20 +445,24 @@ async function stacksPage(isCurrent) {
     : stack;
 
   const load = async () => {
+    // a poll that was due after the page was left
+    if (!isCurrent()) return;
     try {
       // a remote host is an ssh round trip that can time out, so those load one by one below
-      // the clone url is only for a button, so the list shows without it
+      // the clone url is only for the clone button's panel, so the list shows without it
       [stacks] = await Promise.all([api("api/stacks?status=local"), loadCloneUrl().catch(() => undefined)]);
       stacks = stacks.map(withRemoteState);
     } catch (e) {
       if (!isCurrent()) return;
       // a refresh that fails keeps the list that's there, and tries again
-      clearTimeout(timer);
-      if (stacks) timer = setTimeout(load, 4000);
+      if (stacks) poll(BUSY_POLL_MS);
       else show(errorNotice(e));
       return;
     }
-    render();
+    renderIfChanged();
+    // the list keeps itself up to date, faster while something is in flight, so an action
+    // started elsewhere shows its result too
+    poll(stacks.some(stack => stack.busy || pending.has(stack.name)) ? BUSY_POLL_MS : POLL_MS);
 
     stacks.filter(stack => stack.remoteHost && !stack.err && !fetching.has(stack.name)).forEach(async (stack) => {
       fetching.add(stack.name);
@@ -385,33 +476,58 @@ async function stacksPage(isCurrent) {
       fetching.delete(stack.name);
       remoteStates.set(stack.name, state);
       stacks = stacks.map(other => other.name === stack.name ? { ...other, containers: undefined, statusErr: undefined, ...state } : other);
-      render();
+      renderIfChanged();
     });
+  };
+
+  // loads the list again in `ms`. A tab that's hidden by then waits until it's looked at again
+  const poll = (ms) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!document.hidden) return load();
+      document.addEventListener("visibilitychange", load, { once: true });
+    }, ms);
+  };
+
+  // rebuilding the page drops the focus and any text selection, so a poll only does it for news
+  const renderIfChanged = () => {
+    if (rendered !== JSON.stringify([stacks, cloneUrl])) render();
   };
 
   const render = () => {
     if (!isCurrent()) return;
-    clearTimeout(timer);
-    // poll while something is in flight, so an action started elsewhere shows its result too
-    if (stacks.some(stack => stack.busy || pending.has(stack.name))) timer = setTimeout(load, 4000);
+    rendered = JSON.stringify([stacks, cloneUrl]);
+
+    const labels = identifierCounts(stacks);
+    const labelled = stack => (stack.containers || []).filter(container => container.identifier === label);
+    const shown = label ? stacks.filter(stack => labelled(stack).length > 0) : stacks;
 
     show(
       h("div", { class: "page-head" },
         h("h1", {}, "Stacks"),
-        h("span", { class: "muted" }, `${stacks.length} in the repo`),
-        h("span", { class: "spacer" }),
-        cloneUrl && cloneDropdown(),
-        iconButton("refresh", "Refresh", { onclick: load })),
+        h("span", { class: "muted" }, label ? `${shown.length} of ${stacks.length} in the repo` : `${stacks.length} in the repo`),
+        // kept together at the right edge, where the panels under them have room to open
+        h("div", { class: "head-actions" },
+          iconButton("refresh", "Refresh", { onclick: load }),
+          // only when there's a label to pick, or one from the address to clear
+          (labels.size > 0 || label) && labelDropdown(labels),
+          cloneDropdown(render))),
       ...outcomeNotices(stacks.map(stack => stack.name), reload),
       h("div", { class: "card" },
         stacks.length === 0
           ? h("div", { class: "empty" }, "No stacks yet. Push a stacks/<name>/docker-compose.yaml to the repo.")
+          : shown.length === 0
+          ? h("div", { class: "empty" }, "No container of these stacks is labelled ", h("span", { class: "mono" }, `gitainer.identifier=${label}`), ".")
           : h("div", { class: "table-wrap" }, h("table", { class: "stacks-table" },
             h("thead", {}, h("tr", {}, h("th", {}, "Stack"), h("th", {}, "Status"), h("th", { class: "right" }, "Actions"))),
-            h("tbody", {}, stacks.map(stack => h("tr", { class: "clickable", onclick: event => openStack(event, stack.name) },
+            h("tbody", {}, shown.map(stack => h("tr", { class: "clickable", onclick: event => openStack(event, stack.name) },
               h("td", {},
                 h("a", { class: "stack-name", href: `/stacks/${encodeURIComponent(stack.name)}` }, stack.name), " ", badgesEl(stack),
-                (stack.err || stack.statusErr) && h("div", { class: "row-note" }, stack.err || `Status unavailable: ${stack.statusErr}`)),
+                (stack.err || stack.statusErr) && h("div", { class: "row-note" }, stack.err || `Status unavailable: ${stack.statusErr}`),
+                // the status beside it is the whole stack's: these are the containers with the label
+                label && h("div", { class: "row-containers" }, labelled(stack).map(container =>
+                  h("div", { class: `status ${containerStateKind(container)}`, title: container.name },
+                    h("span", { class: "dot" }), h("span", { class: "mono" }, container.service), h("span", { class: "muted" }, container.status))))),
               h("td", {}, statusEl(stack)),
               h("td", { class: "right" }, actionButtons(stack, reload)))))))),
     );
@@ -427,8 +543,8 @@ async function stacksPage(isCurrent) {
 // ---- stack detail ---------------------------------------------------------------------------
 
 // comments and ${VARS} get a colour, the rest is left as it is
-function highlightYaml(text, markVariables) {
-  const pre = h("pre", { class: "code" });
+function highlightYaml(text, markVariables, keep) {
+  const pre = h("pre", { class: "code", "data-keep": keep });
   for (const line of text.replace(/^\n+|\n+$/g, "").split("\n")) {
     if (/^\s*#/.test(line)) {
       pre.append(h("span", { class: "c" }, line), "\n");
@@ -468,13 +584,11 @@ async function stackPage(name, isCurrent) {
       // a refresh that fails keeps the page that's there, and tries again
       clearTimeout(timer);
       if (stack) timer = setTimeout(loadStatus, 4000);
-      else show(crumb(), errorNotice(e));
+      else show(errorNotice(e));
       return;
     }
     render();
   };
-
-  const crumb = () => h("a", { class: "crumb", href: "/" }, "← Stacks");
 
   const showResolved = async (show) => {
     if (!show) {
@@ -505,16 +619,17 @@ async function stackPage(name, isCurrent) {
 
     const unset = (variables || []).filter(variable => !variable.set);
     const stale = staleEnv(stack);
+    const hasLabels = (stack.containers || []).some(container => container.identifier);
 
     show(
-      crumb(),
+      // the refresh ends the stack name's line, and the actions have the line under it
       h("div", { class: "page-head" },
-        h("h1", { class: "mono" }, name),
-        badgesEl(stack),
-        statusEl(stack),
-        h("span", { class: "spacer" }),
-        actionButtons(stack, reload),
-        iconButton("refresh", "Refresh", { class: "quiet", onclick: loadStatus })),
+        h("div", { class: "head-title" },
+          h("h1", { class: "mono" }, name),
+          badgesEl(stack),
+          statusEl(stack)),
+        iconButton("refresh", "Refresh", { class: "quiet", onclick: loadStatus }),
+        h("div", { class: "head-actions below" }, actionButtons(stack, reload))),
       ...outcomeNotices([name], reload),
       stack.err && h("div", { class: "notice bad" }, h("div", { class: "body" }, stack.err)),
       stale.length > 0 && h("div", { class: "notice warn" }, h("div", { class: "body" },
@@ -528,11 +643,16 @@ async function stackPage(name, isCurrent) {
           ? h("div", { class: "empty" }, stack.containers ? "No containers: the stack is down."
             : isStatusPending(stack) ? h("span", { class: "spinner" }) : "Unknown")
           : h("div", { class: "table-wrap" }, h("table", {},
-            h("thead", {}, h("tr", {}, h("th", {}, "Service"), h("th", {}, "Container"), h("th", {}, "State"))),
+            h("thead", {}, h("tr", {}, h("th", {}, "Service"), h("th", {}, "Container"), hasLabels && h("th", { title: "The container's gitainer.identifier label" }, "Gitainer ID"), h("th", {}, "State"))),
             h("tbody", {}, stack.containers.map(container => h("tr", {},
               h("td", { class: "mono" }, container.service),
               h("td", { class: "mono muted" }, container.name),
-              h("td", {}, h("span", { class: `status ${container.state === "running" ? (/unhealthy/.test(container.status) ? "warn" : "ok") : "bad"}` },
+              hasLabels && h("td", {}, container.identifier && h("a", {
+                class: "badge",
+                href: `/?label=${encodeURIComponent(container.identifier)}`,
+                title: `gitainer.identifier=${container.identifier}: show every container with this label`,
+              }, container.identifier)),
+              h("td", {}, h("span", { class: `status ${containerStateKind(container)}` },
                 h("span", { class: "dot" }), container.status))))))))),
 
       h("section", {},
@@ -543,12 +663,12 @@ async function stackPage(name, isCurrent) {
             h("button", { "aria-pressed": String(!!resolved), onclick: () => showResolved(true) }, "With envs"))),
         h("div", { class: "card" },
           !resolved
-            ? highlightYaml(compose, true)
+            ? highlightYaml(compose, true, "compose")
             : resolved.loading ? h("div", { class: "empty" }, h("span", { class: "spinner" }))
             : resolved.err ? h("div", { class: "empty error-text" }, resolved.err)
             : [
               h("div", { class: "code-note muted" }, "What would deploy now, as docker compose config normalises it. It contains secrets."),
-              highlightYaml(resolved.text, false),
+              highlightYaml(resolved.text, false, "compose-resolved"),
             ])),
 
       h("section", {},
@@ -581,7 +701,7 @@ async function stackPage(name, isCurrent) {
 
   const reload = () => { render(); loadStatus(); };
 
-  show(crumb(), loadingEl());
+  show(loadingEl());
   try {
     let stacks;
     [compose, variables, stacks, deploys] = await Promise.all([
@@ -596,7 +716,7 @@ async function stackPage(name, isCurrent) {
   } catch (e) {
     if (!isCurrent()) return;
     if (e.status === 404) notFoundPage(`There's no stack called ${name} in the repo.`);
-    else show(crumb(), errorNotice(e));
+    else show(errorNotice(e));
     return;
   }
   render();
@@ -605,12 +725,12 @@ async function stackPage(name, isCurrent) {
 
 // one stored deploy, opening to its output
 function deployEntry(deploy) {
-  return h("details", { class: "entry" },
+  return h("details", { class: "entry", "data-keep": `deploy-${deploy.id}` },
     h("summary", {},
       h("span", { class: `badge ${deploy.ok ? "ok" : "bad"}` }, `${deploy.action} ${deploy.ok ? "ok" : "failed"}`),
       h("span", { class: "entry-main muted" }, `${deploy.trigger}${deploy.commit ? ` · ${deploy.commit.slice(0, 7)}` : ""}`),
       h("span", { class: "entry-meta" }, `${formatTime(deploy.finishedAt)} · ${duration(deploy.startedAt, deploy.finishedAt)}`)),
-    h("div", { class: "entry-body" }, h("pre", { class: "code" }, deploy.output || "(no output)")));
+    h("div", { class: "entry-body" }, h("pre", { class: "code", "data-keep": `deploy-output-${deploy.id}` }, deploy.output || "(no output)")));
 }
 
 // ---- history --------------------------------------------------------------------------------
@@ -935,7 +1055,7 @@ function route() {
     historyPage(isCurrent);
   } else if (path === "/") {
     document.title = "Stacks · Gitainer";
-    stacksPage(isCurrent);
+    stacksPage(new URLSearchParams(location.search), isCurrent);
   } else {
     notFoundPage();
   }

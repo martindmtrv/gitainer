@@ -278,6 +278,8 @@ export interface StackContainer {
   state: string;
   // docker's human readable status, e.g. "Up 2 hours (healthy)"
   status: string;
+  // its `gitainer.identifier` label, if it has one: the group it's bulk stopped/started with
+  identifier?: string;
 }
 
 // how long a status lookup may take: an unreachable remote host would otherwise hang on ssh
@@ -636,7 +638,7 @@ export class DockerClient {
    */
   async listStackContainers(dockerHost?: string, stackName?: string, timeoutMs: number = STATUS_TIMEOUT_MS): Promise<Map<string, StackContainer[]>> {
     const filter = `label=com.docker.compose.project${stackName ? `=${stackName}` : ''}`;
-    const format = ['{{.Label "com.docker.compose.project"}}', '{{.Label "com.docker.compose.service"}}', '{{.Names}}', '{{.State}}', '{{.Status}}'].join('\t');
+    const format = ['{{.Label "com.docker.compose.project"}}', '{{.Label "com.docker.compose.service"}}', '{{.Names}}', '{{.State}}', '{{.Status}}', '{{.Label "gitainer.identifier"}}'].join('\t');
     const proc = Bun.spawn(['docker', 'ps', '-a', '--filter', filter, '--format', format], {
       env: dockerHost ? { ...process.env, DOCKER_HOST: dockerHost } : process.env,
       stdout: 'pipe',
@@ -661,8 +663,8 @@ export class DockerClient {
 
     const byProject = new Map<string, StackContainer[]>();
     for (const line of stdout.split("\n").filter(Boolean)) {
-      const [project, service, name, state, status] = line.split("\t");
-      byProject.set(project, [...(byProject.get(project) ?? []), { name, service, state, status }]);
+      const [project, service, name, state, status, identifier] = line.split("\t");
+      byProject.set(project, [...(byProject.get(project) ?? []), { name, service, state, status, ...(identifier ? { identifier } : {}) }]);
     }
     return byProject;
   }

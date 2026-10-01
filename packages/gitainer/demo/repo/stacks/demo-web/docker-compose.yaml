@@ -6,6 +6,7 @@ services:
     command: sleep infinity
     stop_grace_period: 1s
     labels:
+      gitainer.identifier: web
       caddy: app.${DOMAIN}
       app.sentry-dsn: ${SENTRY_DSN}
   worker:
@@ -13,6 +14,8 @@ services:
     image: alpine:latest
     command: sleep infinity
     stop_grace_period: 1s
+    labels:
+      gitainer.identifier: jobs
     environment:
       CACHE_URL: redis://:${CACHE_PASSWORD}@cache:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}

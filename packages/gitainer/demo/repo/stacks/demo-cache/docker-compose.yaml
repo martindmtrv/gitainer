@@ -4,5 +4,8 @@ services:
     image: alpine:latest
     command: sleep infinity
     stop_grace_period: 1s
+    # stopped and started together with demo-web's app, see "Bulk stop/start by label" in the README
+    labels:
+      gitainer.identifier: web
     environment:
       CACHE_PASSWORD: ${CACHE_PASSWORD}

@@ -223,8 +223,8 @@ environment:
 
 Gitainer serves a small UI on port 8080 (`http://<host>:8080/`) to operate the stacks in the repo. Editing them still happens in git. Its pages have their own addresses (`/stacks/mystack`, `/env`, ...), so behind a reverse proxy it has to be served at the root of its hostname, not under a sub-path.
 
-- **Stacks** shows the repo's git clone URL with a copy button, and lists every stack with its container states, and badges for a [stale env](#stale-env), the [self-stack](#self-updating-gitainer), [disabled](#disabling-a-stack) stacks and [remote hosts](#remote-docker-host). The buttons call the update / restart / up / down endpoints above, with the same guards: the self-stack can only be updated, a disabled stack only downed.
-- **A stack's page** shows its containers, its compose file with fragments expanded, the variables it reads (with the unset ones flagged) and its recent deploys with their output. The compose file is shown without env values by default; "With envs" shows it interpolated.
+- **Stacks** shows the repo's git clone URL with a copy button, and lists every stack with its container states, and badges for a [stale env](#stale-env), the [self-stack](#self-updating-gitainer), [disabled](#disabling-a-stack) stacks and [remote hosts](#remote-docker-host). When containers carry a [`gitainer.identifier` label](#post-webhook), a "Gitainer ID" dropdown narrows the list to the stacks with containers in that group and names those containers; `/?label=<identifier>` links to it. The list reloads itself every 10 seconds while its tab is visible. The buttons call the update / restart / up / down endpoints above, with the same guards: the self-stack can only be updated, a disabled stack only downed.
+- **A stack's page** shows its containers with their `gitainer.identifier` label (the "Gitainer ID" column), its compose file with fragments expanded, the variables it reads (with the unset ones flagged) and its recent deploys with their output. The compose file is shown without env values by default; "With envs" shows it interpolated.
 - **Env** lists the keys of Gitainer's environment: whether each comes from [Infisical](#infisical-secrets) or the container, and which stacks read it, marking the ones with a [stale](#stale-env) value of it. Values are masked and revealed one key at a time. Variables that stacks read but that aren't set are listed separately.
 - **Info** lists Gitainer's own settings (the env vars it reads) with a short description of each and its current value. Values that can hold credentials aren't shown there: `POST_WEBHOOK`, `GITAINER_COMMANDS` and `INFISICAL_CLIENT_ID` link to the Env page to be revealed, and the API key and Infisical client secret are never shown.
 - **History** lists what Gitainer did, newest first: every push, env update and API call, with the deploys each one made and its full result.
@@ -239,7 +239,7 @@ The UI is static files calling these endpoints, which are also usable on their o
 | --- | --- |
 | `GET /api/info` | `repoName`, `branch`, and `cloneUrl` if `GITAINER_CLONE_URL` is set. |
 | `GET /api/settings` | Gitainer's own settings: `key`, `group`, `description`, `default` (what the image sets), `set`, `visibility` (`plain`, `reveal` or `hidden`), the `value` of the `plain` ones, and `enabled` for on/off settings. |
-| `GET /api/stacks` | Every stack: `name`, `self`, `disabled`, `remoteHost`, its `containers` (`name`, `service`, `state`, `status`), the action in flight (`busy`) and `staleEnv`, the variables it was deployed with another value of. A docker host that doesn't answer within 8 seconds leaves `containers` out and sets `statusErr`. `?status=local` skips the remote hosts. |
+| `GET /api/stacks` | Every stack: `name`, `self`, `disabled`, `remoteHost`, its `containers` (`name`, `service`, `state`, `status`, and `identifier` if it has a `gitainer.identifier` label), the action in flight (`busy`) and `staleEnv`, the variables it was deployed with another value of. A docker host that doesn't answer within 8 seconds leaves `containers` out and sets `statusErr`. `?status=local` skips the remote hosts. |
 | `GET /api/stacks/:stackName/status` | The same, for one stack. |
 | `GET /api/stacks/:stackName` | The compose file with fragments expanded and `${VARS}` left as they are. |
 | `GET /api/stacks/:stackName/resolved` | The compose file with env values interpolated, from `docker compose config`: what would deploy now, which isn't necessarily what is running. Compose normalises it, so comments are dropped. 403 unless an API key is configured. |
@@ -266,7 +266,7 @@ bun run demo:tunnel    # the same, and shares the UI as a public URL through loc
 bun run demo:cleanup   # stops it and removes its containers, networks and files
 ```
 
-The server runs with a clean environment, so the Env page shows only the demo's made-up variables. The demo covers a self-stack, a disabled stack, an undeployed one, a remote host that doesn't answer, a failed push in the history and a stale env. The API key is `demo`; `GITAINER_API_KEY` sets another one, and `GITAINER_DEMO_DIR` where its files go (default `$TMPDIR/gitainer-demo`).
+The server runs with a clean environment, so the Env page shows only the demo's made-up variables. The demo covers a self-stack, a disabled stack, an undeployed one, a remote host that doesn't answer, a failed push in the history, a stale env and a `gitainer.identifier` label shared by two stacks. The API key is `demo`; `GITAINER_API_KEY` sets another one, and `GITAINER_DEMO_DIR` where its files go (default `$TMPDIR/gitainer-demo`).
 
 #### History
 

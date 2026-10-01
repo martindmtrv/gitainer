@@ -2,7 +2,7 @@ import { simpleGit as Git, GitError, type SimpleGit } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import { GitainerServer } from './GitainerServer';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { composeVariables } from '../docker/DockerClient';
+import { composeVariables, disabledFlagVariables, isSameComposeContent } from '../docker/DockerClient';
 
 export class GitConsumer {
   readonly repo: SimpleGit;
@@ -172,9 +172,14 @@ export class GitConsumer {
 
     for (const file of promises) {
       const matches: string[] = [];
+      let disabledFlagChanged = false;
       if (envVars.length > 0) {
         const stackVariables = await this.getStackVariables(file.file);
         matches.push(...envVars.filter(envVar => stackVariables.has(envVar)));
+        if (matches.length > 0) {
+          const flagVariables = await this.getDisabledFlagVariables(file.file);
+          disabledFlagChanged = matches.some(envVar => flagVariables.has(envVar));
+        }
       }
 
       fragments.forEach(fragment => {
@@ -189,6 +194,7 @@ export class GitConsumer {
           type: GitChangeType.MODIFY,
           reason: `Stack contains references to ${matches}`,
           indirect: true,
+          ...(disabledFlagChanged ? { disabledFlagChanged } : {}),
         });
       }
     }
@@ -207,6 +213,32 @@ export class GitConsumer {
     } catch (e) {
       console.error(`Could not read the variables of stack ${stackName}, not redeploying it for env changes`, e);
       return new Set();
+    }
+  }
+
+  // empty when the stack can't be resolved or parsed, like getStackVariables()
+  private async getDisabledFlagVariables(stackFile: string): Promise<Set<string>> {
+    const stackName = (GitainerServer.stackPattern.exec(stackFile) as RegExpExecArray)[1];
+    try {
+      return new Set(await disabledFlagVariables(await this.getStack(stackName) as string));
+    } catch (e) {
+      return new Set();
+    }
+  }
+
+  /**
+   * Whether a stack deploys the same thing at `oldRef` as it does now, fragments expanded, i.e.
+   * its compose file or fragments only changed in comments or formatting. `#!` imports and the
+   * `#@` remote host are directives rather than comments: an import changes the expanded
+   * output, and the remote host is compared too. False when either version can't be built.
+   */
+  async isStackUnchangedSince(stackName: string, oldRef: string): Promise<boolean> {
+    try {
+      const oldContent = await this.getStack(stackName, oldRef);
+      const newContent = await this.getStack(stackName);
+      return oldContent !== undefined && newContent !== undefined && isSameComposeContent(oldContent, newContent);
+    } catch (e) {
+      return false;
     }
   }
 

@@ -179,3 +179,4 @@ resources*_remote*/
 
 # Claude Code worktrees
 .claude/worktrees/
+.claude/settings.local.json

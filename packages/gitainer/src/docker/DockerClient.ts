@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { $ } from "bun";
+import { isDeepStrictEqual } from "node:util";
 import { isTransientPullError, withRetry } from "./retry";
 import jsyaml from "js-yaml";
 import selfUpdateScript from "./self-update.sh" with { type: "text" };
@@ -92,27 +93,89 @@ export function extractShutdownHook(composeString: string): string[] {
   throw new Error("x-shutdown-hook must be a command string or a list of command strings");
 }
 
-/**
- * Whether the compose file sets the top-level `x-gitainer-disabled: true`, which keeps the stack
- * down. Read from the parsed YAML, so a commented-out flag doesn't count. Throws on a value that
- * isn't a boolean, so a typo like `"true"` fails the push instead of deploying the stack.
- */
-export function isStackDisabled(composeString: string): boolean {
+const DISABLED_KEY = 'x-gitainer-disabled';
+
+// the raw top-level x-gitainer-disabled value, before compose interpolates it
+function rawDisabledFlag(composeString: string): unknown {
   let parsed: any;
   try {
     parsed = jsyaml.load(composeString);
   } catch (e) {
-    return false;
+    return undefined;
   }
 
-  const disabled = parsed && typeof parsed === 'object' ? parsed['x-gitainer-disabled'] : undefined;
-  if (disabled === undefined || disabled === null) {
+  return parsed && typeof parsed === 'object' ? parsed[DISABLED_KEY] : undefined;
+}
+
+// a string with a `$` is handed to compose to interpolate. Anything else has to be a YAML boolean
+function isInterpolatedFlag(flag: unknown): flag is string {
+  return typeof flag === 'string' && flag.includes('$');
+}
+
+// a compose file holding only the flag, so interpolating it doesn't depend on the rest of the stack
+function disabledFlagCompose(flag: string): string {
+  return jsyaml.dump({ [DISABLED_KEY]: flag });
+}
+
+/**
+ * Whether the compose file sets the top-level `x-gitainer-disabled: true`, which keeps the stack
+ * down. Read from the parsed YAML, so a commented-out flag doesn't count. The value may come from
+ * an env var (`${DISABLE_APP}`, `${DISABLE_APP:-false}`): it's then interpolated by compose
+ * itself, and has to come out as `true` or `false`. A blank result (the variable is unset, with no
+ * default) counts as not disabled. Throws on any other value, and on a hard-coded one that isn't
+ * a boolean, so a typo like `"true"` fails the push instead of deploying the stack.
+ */
+export async function isStackDisabled(composeString: string): Promise<boolean> {
+  const flag = rawDisabledFlag(composeString);
+  if (flag === undefined || flag === null) {
     return false;
   }
-  if (typeof disabled === 'boolean') {
-    return disabled;
+  if (typeof flag === 'boolean') {
+    return flag;
   }
-  throw new Error(`x-gitainer-disabled must be true or false, got ${JSON.stringify(disabled)}`);
+  if (!isInterpolatedFlag(flag)) {
+    throw new Error(`${DISABLED_KEY} must be true or false, got ${JSON.stringify(flag)}`);
+  }
+
+  const fileName = composeStringToTmp(disabledFlagCompose(flag));
+  try {
+    const result = await $`docker compose -f ${fileName} config --format json`.nothrow().quiet();
+    if (result.exitCode !== 0) {
+      throw new Error(`Could not interpolate ${DISABLED_KEY} (${flag}): ${result.stderr.toString().trim()}`);
+    }
+    const value = String(JSON.parse(result.stdout.toString())[DISABLED_KEY] ?? '').trim().toLowerCase();
+    if (value === 'true' || value === 'false' || value === '') {
+      return value === 'true';
+    }
+    // not the interpolated value: it comes from the env, so it could be a secret
+    throw new Error(`${DISABLED_KEY} (${flag}) must interpolate to true or false`);
+  } finally {
+    rmSync(fileName, { force: true });
+  }
+}
+
+/**
+ * The variables the compose file's `x-gitainer-disabled` reads, e.g. `DISABLE_APP` for
+ * `${DISABLE_APP:-false}`. Empty for a hard-coded (or missing) flag.
+ */
+export async function disabledFlagVariables(composeString: string): Promise<string[]> {
+  const flag = rawDisabledFlag(composeString);
+  return isInterpolatedFlag(flag) ? await composeVariables(disabledFlagCompose(flag)) : [];
+}
+
+/**
+ * Whether two versions of a stack deploy the same thing: the same parsed YAML and the same
+ * `#@` remote host. They then only differ in comments or formatting. Compared as parsed YAML
+ * rather than by stripping `#` lines, since a `#` inside a quoted string or block scalar isn't a
+ * comment. False when either version can't be parsed, so the deploy reports the real error.
+ */
+export function isSameComposeContent(oldCompose: string, newCompose: string): boolean {
+  try {
+    return isDeepStrictEqual(extractRemoteHostConfig(oldCompose), extractRemoteHostConfig(newCompose))
+      && isDeepStrictEqual(jsyaml.load(oldCompose), jsyaml.load(newCompose));
+  } catch (e) {
+    return false;
+  }
 }
 
 export function parseCommandString(cmd: string): string[] {

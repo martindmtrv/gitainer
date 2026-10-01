@@ -115,7 +115,7 @@ export class WebhookServer {
         }, 404);
       }
 
-      const disabledErr = this.disabledError(stackFile, stackName);
+      const disabledErr = await this.disabledError(stackFile, stackName);
       if (disabledErr) {
         return c.json({
           err: disabledErr,
@@ -225,7 +225,7 @@ export class WebhookServer {
         }
 
         // a disabled stack can still be downed, but not brought up
-        const disabledErr = action === "down" ? undefined : this.disabledError(stackFile, stackName);
+        const disabledErr = action === "down" ? undefined : await this.disabledError(stackFile, stackName);
         if (disabledErr) {
           return c.json({
             err: disabledErr,
@@ -389,11 +389,12 @@ export class WebhookServer {
     })
   }
 
-  // why the stack can't be brought up, if it's disabled with x-gitainer-disabled
-  private disabledError(stackFile: string, stackName: string): string | undefined {
+  // why the stack can't be brought up, if it's disabled with x-gitainer-disabled. The flag is
+  // read after interpolation, so one set from an env var counts too
+  private async disabledError(stackFile: string, stackName: string): Promise<string | undefined> {
     try {
-      return isStackDisabled(stackFile)
-        ? `Stack ${stackName} is disabled with x-gitainer-disabled: true; remove the flag in git to deploy it`
+      return await isStackDisabled(stackFile)
+        ? `Stack ${stackName} is disabled with x-gitainer-disabled: true; remove the flag in git (or unset the env var it reads) to deploy it`
         : undefined;
     } catch (e) {
       return (e as Error).message;

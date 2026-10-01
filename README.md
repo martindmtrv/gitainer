@@ -8,7 +8,8 @@ Simple Git-based container management platform for Docker Standalone
 - Pass through Variables and YAML fragments to keep your stacks DRY
 - Prepend setup commands to containers via `prefix_entrypoint` without overriding original execution
 - Run a stack-level `x-shutdown-hook` (e.g. a backup) before a stack is taken down
-- Keep a stack down without deleting it via `x-gitainer-disabled: true`
+- Keep a stack down without deleting it via `x-gitainer-disabled: true`, or from an env var
+- Comment-only changes to a compose file or fragment don't redeploy the stack
 - Lightweight HTTP API to trigger stack actions from CI/CD pipelines
 - POST webhook option for update responses
 
@@ -94,6 +95,16 @@ A stack pulled in only by a changed env var or fragment is skipped if it isn't d
 }
 ```
 
+A stack whose compose file or fragments only changed in comments isn't redeployed (see [Comment-only changes](#comment-only-changes)). These stacks are listed in `commentOnlyStacks`, left out of `changes`, and appended to `msg` (or `err`):
+```json
+{
+  "title": "Gitainer: Git Push",
+  "msg": "Synthesis succeeded for 0 stack(s). Skipped 1 stack(s) with comment-only changes: mystack",
+  "changes": [],
+  "commentOnlyStacks": ["mystack"]
+}
+```
+
 Stacks kept down by [`x-gitainer-disabled: true`](#disabling-a-stack) are listed in `disabledStacks`, and appended to `msg` as `Disabled with x-gitainer-disabled (not deployed): <names>`.
 
 On failure from a `git push` (where the bad commit is rolled back), the payload also reports what was rolled back:
@@ -139,7 +150,7 @@ On failure from an env-change-triggered resynthesis (no commit to roll back), th
 
 **Stack down / up / restart** (`POST /api/stacks/:stackName/down`, `/up`, `/restart`, `title: "Gitainer: Webhook"`) act on a stack from the repo without pulling its images:
 
-- `down` runs the stack's [`x-shutdown-hook`](#shutdown-hook), then `docker compose down`. The stack stays in the repo: env and fragment changes [skip it](#skipping-stacks-that-arent-deployed) while it's down, but a push that changes its compose file, `up`, `restart` or `POST /api/stacks/:stackName` brings it back up. To keep a stack down durably, [disable it](#disabling-a-stack) in git; to remove it for good, delete it.
+- `down` runs the stack's [`x-shutdown-hook`](#shutdown-hook), then `docker compose down`. The stack stays in the repo: env and fragment changes [skip it](#skipping-stacks-that-arent-deployed) while it's down, but a push that changes its compose file (beyond [comments](#comment-only-changes)), `up`, `restart` or `POST /api/stacks/:stackName` brings it back up. To keep a stack down durably, [disable it](#disabling-a-stack) in git; to remove it for good, delete it.
 - `up` runs `docker compose up -d` with no down or pull first. It starts a downed stack, and only recreates containers whose config or env changed. Images that aren't present locally are still pulled.
 - `restart` is a forced reload without the pull: the shutdown hook, a down, then `up -d --force-recreate`.
 
@@ -240,7 +251,19 @@ On startup, Gitainer checks the current set of environment variables against the
 
 A stack that is only redeployed because it references a changed env var or a changed fragment is skipped if it has no containers, e.g. after `POST /api/stacks/:stackName/down` or a manual `docker compose down`. A rotated secret doesn't bring a stack back up in the middle of maintenance. It picks up the current env and fragments whenever it's next brought up. The skipped stacks are reported in the `POST_WEBHOOK` payload's `skippedStacks`.
 
-A push that changes the stack's own compose file always deploys it, as do `POST /api/stacks/:stackName`, `/up` and `/restart`. A stack that is only stopped (`docker stop`) still has its containers, so it counts as deployed and is redeployed. If the check itself fails (e.g. an unreachable remote host), the stack is redeployed rather than skipped, so the real error is reported.
+A push that changes the stack's own compose file deploys it (unless the change is [comment-only](#comment-only-changes)), as do `POST /api/stacks/:stackName`, `/up` and `/restart`. So does a change to an env var that the stack's own [`x-gitainer-disabled`](#setting-the-flag-from-an-env-var) reads. A stack that is only stopped (`docker stop`) still has its containers, so it counts as deployed and is redeployed. If the check itself fails (e.g. an unreachable remote host), the stack is redeployed rather than skipped, so the real error is reported.
+
+### Comment-only changes
+
+A push that only changes comments in a stack's compose file doesn't redeploy the stack. Gitainer compares the stack as it was before the push with the pushed version, both with their fragments expanded, as parsed YAML. If they're equal, the stack is left alone and listed in the `POST_WEBHOOK` payload's `commentOnlyStacks`.
+
+- The same goes for whitespace, quoting and key order, which don't change the parsed YAML either.
+- A `#` inside a quoted string or a block scalar (e.g. a `command: |` script) isn't a comment, so changing it redeploys the stack.
+- The two directives that look like comments still count: a `#! <fragment>` [import](#fragments) changes the expanded stack, and the `#@` [remote host](#remote-docker-host) line is compared separately.
+- A comment-only edit to a fragment doesn't redeploy the stacks importing it. A change to the fragment's content does.
+- Added, deleted and renamed stacks are always processed.
+- Env changes still redeploy the stack, including one that changed since the last synthesis and arrives with a comment-only push.
+- `POST /api/stacks/:stackName`, `/up` and `/restart` deploy the stack whatever the last commit changed.
 
 ### Infisical (secrets)
 In addition to using environment variables, Gitainer also now supports Infisical for secrets and variables. Secrets will be pulled and merged into the set of environment varibles to be used as descibed above, on the following cadence:
@@ -564,9 +587,25 @@ services:
 
 - The push that adds the flag downs the stack, running its [shutdown hook](#shutdown-hook). While the flag is set, no push, env change or fragment change deploys it, and its images aren't pulled. `POST /api/stacks/:stackName`, `/up` and `/restart` refuse it with a 400; `/down` still works.
 - Remove the flag, set it to `false` or comment it out, and push to deploy the stack again. The flag is read from the parsed YAML, so a commented-out `# x-gitainer-disabled: true` has no effect.
-- Only a YAML boolean counts. Any other value, e.g. `"true"` or `yes`, fails the push.
+- A hard-coded value has to be a YAML boolean. Any other value, e.g. `"true"` or `yes`, fails the push.
 - Disabled stacks are listed in the `POST_WEBHOOK` payload's `disabledStacks`.
 - The [self-stack](#self-updating-gitainer) can't be disabled: a push that sets the flag on it leaves the running gitainer container untouched and adds a `warnings` entry, like deleting it.
+
+#### Setting the flag from an env var
+
+The flag can read an env var, so a stack can be turned off and on from [Infisical](#infisical-secrets) without a commit:
+
+```yaml
+x-gitainer-disabled: ${DISABLE_APP:-false}
+services:
+  app:
+    image: nginx
+```
+
+- The value is interpolated by compose itself, so the usual [syntax](https://docs.docker.com/compose/environment-variables/variable-interpolation/) applies (`$VAR`, `${VAR}`, `${VAR:-default}`). It has to come out as `true` or `false`; anything else fails the push, or the env update. A variable that is unset with no default counts as `false`.
+- It takes effect when the env changes, like any other env-driven redeploy: on an Infisical poll, or a Gitainer restart (with `STACK_UPDATE_ON_ENV_CHANGE`). Setting the variable to `true` downs the stack, and setting it back to `false` deploys it again. This is the one env change that isn't [skipped](#skipping-stacks-that-arent-deployed) for a stack with no containers.
+- `POST /api/stacks/:stackName`, `/up` and `/restart` check the interpolated value.
+- A commented-out flag still has no effect.
 
 ## Motivation
 

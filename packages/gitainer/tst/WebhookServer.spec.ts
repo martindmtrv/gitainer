@@ -297,6 +297,7 @@ describe("WebhookServer x-gitainer-disabled stacks", () => {
   const stacks: Record<string, string> = {
     disabled: "x-gitainer-disabled: true\nservices:\n  app:\n    image: nginx",
     commented: "# x-gitainer-disabled: true\nservices:\n  app:\n    image: nginx",
+    fromEnv: "x-gitainer-disabled: ${GITAINER_WEBHOOK_TEST_DISABLED:-false}\nservices:\n  app:\n    image: nginx",
   };
   const mockBareRepo = {
     getStack: async (name: string) => stacks[name] ?? null,
@@ -317,7 +318,7 @@ describe("WebhookServer x-gitainer-disabled stacks", () => {
 
     const res = await server.app.request(`/api/stacks/disabled${suffix}`, { method: "POST" });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ err: "Stack disabled is disabled with x-gitainer-disabled: true; remove the flag in git to deploy it" });
+    expect(await res.json()).toEqual({ err: "Stack disabled is disabled with x-gitainer-disabled: true; remove the flag in git (or unset the env var it reads) to deploy it" });
   });
 
   test("POST /api/stacks/:stackName/down still downs a disabled stack", async () => {
@@ -325,6 +326,26 @@ describe("WebhookServer x-gitainer-disabled stacks", () => {
 
     const res = await server.app.request("/api/stacks/disabled/down", { method: "POST" });
     expect(res.status).toBe(200);
+  });
+
+  test.each(["", "/up", "/restart"])("POST /api/stacks/:stackName%s uses the interpolated value of a flag set from an env var", async (suffix) => {
+    const server = new WebhookServer(mockDocker, mockBareRepo, mockGitainer);
+
+    try {
+      process.env.GITAINER_WEBHOOK_TEST_DISABLED = "true";
+      const refused = await server.app.request(`/api/stacks/fromEnv${suffix}`, { method: "POST" });
+      expect(refused.status).toBe(400);
+      expect((await refused.json()).err).toStartWith("Stack fromEnv is disabled with x-gitainer-disabled: true");
+
+      process.env.GITAINER_WEBHOOK_TEST_DISABLED = "false";
+      expect((await server.app.request(`/api/stacks/fromEnv${suffix}`, { method: "POST" })).status).toBe(200);
+
+      // unset, so the default applies
+      delete process.env.GITAINER_WEBHOOK_TEST_DISABLED;
+      expect((await server.app.request(`/api/stacks/fromEnv${suffix}`, { method: "POST" })).status).toBe(200);
+    } finally {
+      delete process.env.GITAINER_WEBHOOK_TEST_DISABLED;
+    }
   });
 
   test.each(["", "/up", "/restart"])("POST /api/stacks/:stackName%s ignores a commented-out flag", async (suffix) => {

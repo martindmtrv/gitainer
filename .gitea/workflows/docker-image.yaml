@@ -25,6 +25,8 @@ jobs:
       image_name: ghcr.io/martindmtrv/gitainer
       file: packages/gitainer/Dockerfile
       platforms: linux/amd64,linux/arm64
+    secrets:
+      INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
 
   deploy-gitainer:
     needs: [build-publish-github]

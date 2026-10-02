@@ -17,6 +17,7 @@ jobs:
       - name: Run Tests
         run: docker run --privileged --rm -w /app gitainer-test
 
+  # GHCR_PAT comes from Infisical, loaded inside the reusable workflow
   build-publish-github:
     needs: test
     uses: martin/chromart-gitea-actions/.gitea/workflows/docker-publish-ghcr.yaml@main

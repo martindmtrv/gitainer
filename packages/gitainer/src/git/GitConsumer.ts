@@ -38,15 +38,12 @@ export class GitConsumer {
   async getAllStackNames(): Promise<string[]> {
     const stacks = await this.getAllStacks();
 
-    return stacks.map(stack => (GitainerServer.stackPattern.exec(stack.file) as RegExpExecArray)[1])
+    return [...new Set(stacks.map(stack => GitainerServer.stackNameOf(stack.file) as string))];
   }
 
   async getStack(stackName: string, ref: string = "main"): Promise<string | undefined> {
-    let fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yaml`, ref);
-
-    if (!fileContents) {
-      fileContents = await this.getFileContents(`stacks/${stackName}/docker-compose.yml`, ref);
-    }
+    const file = await this.findStackFile(stackName, ref);
+    let fileContents = file && await this.getFileContents(file, ref);
 
     if (!fileContents) {
       return undefined;
@@ -90,6 +87,24 @@ export class GitConsumer {
     }
 
     return fileContents;
+  }
+
+  // the compose files defining a stack at `ref`. Its folder can't be told from its name
+  // (`host-web` is stacks/host-web or stacks/host/web), so they're looked up
+  private async listStackFiles(stackName: string, ref: string): Promise<string[]> {
+    return (await this.listAllFiles("stacks/", ref)).filter(file => GitainerServer.stackNameOf(file) === stackName);
+  }
+
+  // docker-compose.yaml wins over .yml
+  private async findStackFile(stackName: string, ref: string): Promise<string | undefined> {
+    const files = await this.listStackFiles(stackName, ref);
+    return files.find(file => file.endsWith(".yaml")) ?? files[0];
+  }
+
+  /** The folders defining the stack: more than one when two folders flatten to the same name. */
+  async getStackFolders(stackName: string, ref: string = "main"): Promise<string[]> {
+    const files = await this.listStackFiles(stackName, ref);
+    return [...new Set(files.map(file => file.slice(0, file.lastIndexOf("/"))))];
   }
 
   async getFileContents(filePath: string, ref: string = "main"): Promise<string | undefined> {
@@ -150,15 +165,15 @@ export class GitConsumer {
     return this.getChangesBetween(oldrev, newrev);
   }
 
-  async listAllFiles(prefix: string): Promise<string[]> {
+  async listAllFiles(prefix: string, ref: string = "main"): Promise<string[]> {
     try {
-      const output = await this.repo.raw('ls-tree', '-r', 'main', '--name-only');
+      const output = await this.repo.raw('ls-tree', '-r', ref, '--name-only');
       return output
         .split("\n")
         .slice(0, -1)
         .filter(path => path.startsWith(prefix));
     } catch (e) {
-      // this throws when the repo is empty
+      // this throws when the repo is empty, or `ref` doesn't exist
       return [];
     }
   }
@@ -216,7 +231,7 @@ export class GitConsumer {
    * logged) when the stack can't be resolved or parsed: it couldn't be deployed either.
    */
   private async getStackVariables(stackFile: string): Promise<Set<string>> {
-    const stackName = (GitainerServer.stackPattern.exec(stackFile) as RegExpExecArray)[1];
+    const stackName = GitainerServer.stackNameOf(stackFile) as string;
     try {
       return new Set(await composeVariables(await this.getStack(stackName) as string));
     } catch (e) {
@@ -227,7 +242,7 @@ export class GitConsumer {
 
   // empty when the stack can't be resolved or parsed, like getStackVariables()
   private async getDisabledFlagVariables(stackFile: string): Promise<Set<string>> {
-    const stackName = (GitainerServer.stackPattern.exec(stackFile) as RegExpExecArray)[1];
+    const stackName = GitainerServer.stackNameOf(stackFile) as string;
     try {
       return new Set(await disabledFlagVariables(await this.getStack(stackName) as string));
     } catch (e) {

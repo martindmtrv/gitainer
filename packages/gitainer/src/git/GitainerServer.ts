@@ -26,14 +26,22 @@ export class GitainerServer {
   // the history of events and deploys, if it's kept
   readonly store?: EventStore;
 
-  static readonly stackPattern: RegExp = /stacks\/([a-zA-Z-_]*)\/docker-compose\.(yaml|yml)/;
+  static readonly stackPattern: RegExp = /^stacks\/([a-zA-Z-_]+(?:\/[a-zA-Z-_]+)*)\/docker-compose\.(yaml|yml)$/;
+
+  /**
+   * The stack a compose file in the repo defines, if it defines one. Stacks can be grouped in
+   * folders, and the name stays flat: it's the folders joined with dashes, so both
+   * stacks/host-web/docker-compose.yaml and stacks/host/web/docker-compose.yaml are `host-web`.
+   */
+  static stackNameOf(file: string): string | undefined {
+    return GitainerServer.stackPattern.exec(file)?.[1].replaceAll("/", "-");
+  }
 
   // for renames, `file` may no longer match the stack pattern (e.g. renamed to keep for
   // historical purposes while tearing the stack down), so fall back to `oldFile`
   static resolveStackName(change: GitChange): string | undefined {
-    const match = GitainerServer.stackPattern.exec(change.file)
-      || (change.oldFile ? GitainerServer.stackPattern.exec(change.oldFile) : null);
-    return match?.[1];
+    return GitainerServer.stackNameOf(change.file)
+      ?? (change.oldFile ? GitainerServer.stackNameOf(change.oldFile) : undefined);
   }
 
   bareRepo!: GitConsumer;
@@ -205,6 +213,17 @@ export class GitainerServer {
     return new Set((await this.bareRepo.listStacksWithEnvReference(modifiedEnvs)).map(change => change.file));
   }
 
+  /**
+   * Throws if two folders in the repo define the stack (stacks/host-web and stacks/host/web are
+   * both `host-web`): they would replace each other's containers.
+   */
+  private async assertUniqueStack(stackName: string) {
+    const folders = await this.bareRepo.getStackFolders(stackName);
+    if (folders.length > 1) {
+      throw new Error(`${folders.join(" and ")} would both be the stack "${stackName}": rename one of them`);
+    }
+  }
+
   isSelfStack(stackName: string): boolean {
     return !!this.selfStackName && stackName === this.selfStackName;
   }
@@ -278,10 +297,13 @@ export class GitainerServer {
       // changed comments or formatting, so there's nothing to redeploy. Adds, deletes and renames
       // always count, and so do env changes, which arrive as indirect changes of their own.
       const fromGit = !change.indirect || fragmentStackFiles.has(change.file);
-      if (fromGit && change.type === GitChangeType.MODIFY && await this.bareRepo.isStackUnchangedSince(stackName, previousRef)) {
+      // a compose file moved to another folder of the same stack (stacks/host-web to
+      // stacks/host/web) is the same stack: only what it deploys counts
+      const movedInStack = !!change.oldFile && GitainerServer.stackNameOf(change.oldFile) === GitainerServer.stackNameOf(change.file);
+      if (fromGit && (change.type === GitChangeType.MODIFY || movedInStack) && await this.bareRepo.isStackUnchangedSince(stackName, previousRef)) {
         pendingEnvStacks ??= await this.stacksWithPendingEnvChange();
         if (!pendingEnvStacks.has(change.file)) {
-          log(`== skipping ${stackName}: comment-only change, not redeploying ==`);
+          log(`== skipping ${stackName}: ${movedInStack ? "moved without a change to what it deploys" : "comment-only change"}, not redeploying ==`);
           commentOnlyStacks.push(stackName);
           continue;
         }
@@ -297,14 +319,21 @@ export class GitainerServer {
     }
     const skippedMsg = (skippedStacks.length ? `. Skipped ${skippedStacks.length} stack(s) that aren't deployed: ${skippedStacks.join(', ')}` : '')
       + (commentOnlyStacks.length ? `. Skipped ${commentOnlyStacks.length} stack(s) with comment-only changes: ${commentOnlyStacks.join(', ')}` : '');
+    // deletes go first. A stack moved between stacks/host-web and stacks/host/web keeps its
+    // name, and git reports the move as a delete and an add when the file changed with it:
+    // downing the old version after the new one is up would take the new one down
+    const deletesFirst = [
+      ...allStackChanges.filter(change => change.type === GitChangeType.DELETE),
+      ...allStackChanges.filter(change => change.type !== GitChangeType.DELETE),
+    ];
     // process the self stack last, so any other stacks in this push get their fully
     // reversible update+rollback before the irreversible self-update is triggered
     const combinedStackChanges = this.selfStackName
       ? [
-          ...allStackChanges.filter(change => !this.isSelfStack(GitainerServer.resolveStackName(change) as string)),
-          ...allStackChanges.filter(change => this.isSelfStack(GitainerServer.resolveStackName(change) as string)),
+          ...deletesFirst.filter(change => !this.isSelfStack(GitainerServer.resolveStackName(change) as string)),
+          ...deletesFirst.filter(change => this.isSelfStack(GitainerServer.resolveStackName(change) as string)),
         ]
-      : allStackChanges;
+      : deletesFirst;
     const successfullyProcessedStacks: { file: string, stackName: string, content: string }[] = [];
     const selfStackWarnings: string[] = [];
     const disabledStacks: string[] = [];
@@ -321,13 +350,14 @@ export class GitainerServer {
       for (const change of combinedStackChanges) {
         currentStack = change.file;
         stackStartedAt = new Date().toISOString();
-        const stackName = GitainerServer.stackPattern.exec(change.file)?.[1];
+        const stackName = GitainerServer.stackNameOf(change.file);
         // deletes and renames out of the stack pattern deploy nothing. The self stack is pulled
         // here too, so a bad gitainer image also fails before any other stack is touched
         if (change.type === GitChangeType.DELETE || !stackName) {
           continue;
         }
 
+        await this.assertUniqueStack(stackName);
         hydratedCompose = await this.bareRepo.getStack(stackName) as string;
         // also validates the flag, so a bad value fails before any stack is touched
         if (await isStackDisabled(hydratedCompose)) {
@@ -343,8 +373,8 @@ export class GitainerServer {
         currentStack = change.file;
         stackStartedAt = new Date().toISOString();
         const isRename = change.type.toString().startsWith("R");
-        const newStackName = GitainerServer.stackPattern.exec(change.file)?.[1];
-        const oldStackName = change.oldFile ? GitainerServer.stackPattern.exec(change.oldFile)?.[1] : undefined;
+        const newStackName = GitainerServer.stackNameOf(change.file);
+        const oldStackName = change.oldFile ? GitainerServer.stackNameOf(change.oldFile) : undefined;
         const stackName = (newStackName ?? oldStackName) as string;
         // a rename that moves the compose file out of the stack pattern (e.g. renamed to keep
         // it in the repo for historical purposes) should only tear the stack down, not re-deploy it
@@ -390,7 +420,10 @@ export class GitainerServer {
         if (change.type === GitChangeType.DELETE || change.type === GitChangeType.MODIFY || isRename) {
           // an env change has no commit behind it: the deployed version is the current one
           const cleanUpTarget = event === WebhookEventType.ENV_UPDATE ? "HEAD" : previousRef;
-          const oldContent = await this.bareRepo.getStack(stackName, cleanUpTarget);
+          // a compose file moved to the folder of another stack (stacks/web to stacks/host/web)
+          // is a new stack: what's deployed is the stack it was moved from
+          const deployedStackName = (isRename && oldStackName) || stackName;
+          const oldContent = await this.bareRepo.getStack(deployedStackName, cleanUpTarget);
           // renaming a compose file to no longer match the stack pattern (e.g. prefixing it to
           // keep it around for historical purposes) tears the stack down without redeploying it
           const willRedeploy = hasNewVersion && !disabled;
@@ -402,10 +435,15 @@ export class GitainerServer {
           }
 
           if (oldContent) {
-            log(`Deconfiguring ${stackName} (deleted, renamed, modified or disabled)`);
+            log(`Deconfiguring ${deployedStackName} (deleted, renamed, modified or disabled)`);
             // run the newest version's shutdown hook: the incoming one when there is one, so a
             // push can fix a broken hook instead of being blocked by it
-            await this.docker.composeDown(oldContent, stackName, hasNewVersion ? hydratedCompose : oldContent, log);
+            await this.docker.composeDown(oldContent, deployedStackName, hasNewVersion ? hydratedCompose : oldContent, log);
+            if (deployedStackName !== stackName) {
+              recordDeploy(deployedStackName, "down", true);
+              await this.store?.clearStackEnv(deployedStackName);
+              stackStartedAt = new Date().toISOString();
+            }
           }
           if (disabled) {
             log(`== ${stackName} is disabled with x-gitainer-disabled, not deploying it ==`);
@@ -464,7 +502,7 @@ export class GitainerServer {
         ...(skippedStacks.length ? { skippedStacks } : {}),
         ...(commentOnlyStacks.length ? { commentOnlyStacks } : {}),
       };
-      const failedStackName = GitainerServer.stackPattern.exec(currentStack)?.[1];
+      const failedStackName = GitainerServer.stackNameOf(currentStack);
       if (failedStackName) {
         recordDeploy(failedStackName, failedAction, false, res.output);
       }

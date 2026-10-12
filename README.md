@@ -66,6 +66,22 @@ git push
 
 "mystack" will now be deployed on the host machine
 
+### Stacks in folders
+
+Stacks can be grouped in folders under `stacks/`, e.g. by the host they run on. A stack's name stays flat: it's its folders joined with dashes.
+
+```
+stacks/mystack/docker-compose.yaml       -> mystack
+stacks/nas/media/docker-compose.yaml     -> nas-media
+stacks/vps/media/docker-compose.yaml     -> vps-media
+```
+
+- That name is what the stack goes by everywhere outside the repo: its compose project, the API (`POST /api/stacks/nas-media`), the UI, webhook payloads and [`GITAINER_SELF_STACK`](#self-updating-gitainer).
+- Moving a stack into the folders its name spells (`git mv stacks/nas-media stacks/nas/media`) doesn't change the stack, so the push doesn't redeploy it.
+- Moving it to a folder of another name (`git mv stacks/media stacks/nas/media`) renames it: the push downs `media` and deploys `nas-media`. Compose prefixes the volumes and networks it creates with the project name, so the renamed stack starts with new, empty named volumes (`nas-media_data` rather than `media_data`) unless they're declared `external` or given a fixed `name:`. Bind mounts aren't affected.
+- A push that leaves two folders with the same name (`stacks/nas/media` and `stacks/nas-media`) is rejected.
+- Folder names follow the same rule as stack names: letters, `-` and `_`.
+
 ### POST Webhook
 
 If `POST_WEBHOOK` is set, Gitainer will send an HTTP POST with a `Content-Type: application/json` header to that URL after a stack update completes. The body is the plain JSON result object itself (not a string-wrapped copy) — parse it directly as JSON.
@@ -398,14 +414,32 @@ Mount your local `.ssh` directory into the container's home directory (read-only
 ```
 
 ##### Option B: Mount the SSH Agent Socket (Recommended & Secure)
-If you run `ssh-agent` on the host, mount the SSH agent socket and pass the environment variable:
+If you run `ssh-agent` on the host, mount the directory that holds the agent socket and point `SSH_AUTH_SOCK` at the socket inside it. For a systemd user agent at `/run/user/1000/ssh-agent.socket`:
 ```yaml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${SSH_AUTH_SOCK}:/ssh-agent
+      - type: bind
+        source: /run/user
+        target: /run/host-user
+        read_only: true
+        bind:
+          propagation: rslave
+          create_host_path: false
     environment:
-      - SSH_AUTH_SOCK=/ssh-agent
+      - SSH_AUTH_SOCK=/run/host-user/1000/ssh-agent.socket
 ```
+
+Don't mount the socket file itself (`${SSH_AUTH_SOCK}:/ssh-agent`). Docker resolves a file bind once, when the container starts, so it breaks in two ways, and every remote host deploy then fails with `Permission denied (publickey)`:
+
+- The socket doesn't exist yet when the container starts, e.g. after a reboot, before the user's runtime directory is set up. Docker creates a directory in its place, on the host as well, and the container keeps that empty directory. Restarting the container doesn't help, it has to be recreated.
+- The agent recreates its socket later (logout and login, agent restart). The container still holds the old one.
+
+Mounting a directory that always exists avoids both:
+
+- `/run/user` is created early at boot, and the per-user directory and the socket appear below it later. `propagation: rslave` makes the container see them when they do: `/run/user/<uid>` is its own mount, which a plain bind of `/run/user` wouldn't pick up. This needs `/run` to be a shared mount on the host, the default with systemd.
+- `create_host_path: false` stops Docker from creating the source if it is missing. The container fails to start instead.
+
+If your agent socket lives elsewhere, mount its parent directory the same way. `rslave` is only needed when a mount can appear below that directory after the container has started.
 
 ### Self-Updating Gitainer
 
@@ -439,7 +473,7 @@ A few things to know:
 If you're already running gitainer (or any compose deployment) via `docker compose up -d` outside of gitainer's management, you can bring it under self-update with no downtime as long as the compose project name stays the same before and after:
 
 1. Find the project name your current deployment is running under (it defaults to the directory name you ran `docker compose up` from, or check with `docker inspect <container> --format '{{index .Config.Labels "com.docker.compose.project"}}'`).
-2. Use that exact name as your self-stack name going forward - it needs to match both `GITAINER_SELF_STACK` and the `stacks/<name>/` directory you push to, so that the sibling container's `up -d --force-recreate` recognizes your existing containers as the same project and replaces them in place instead of standing up a second, conflicting copy.
+2. Use that exact name as your self-stack name going forward - it needs to match both `GITAINER_SELF_STACK` and the `stacks/<name>/` directory you push to (for a stack [in a folder](#stacks-in-folders), `<name>` is its folders joined with dashes), so that the sibling container's `up -d --force-recreate` recognizes your existing containers as the same project and replaces them in place instead of standing up a second, conflicting copy.
 3. Add `GITAINER_SELF_STACK: <name>` to your current deployment's environment and restart it once (`docker compose up -d`) to pick it up. This is the only manual step - after this, updates flow through git pushes.
 4. Clone gitainer's repo, create `stacks/<name>/docker-compose.yaml` with the same service definitions you're already running, commit, and push. Gitainer treats this first push the same as any other self-update (routed through the safe `composeSelfUpdate` path), so it force-recreates your existing containers under the matching project rather than starting fresh ones.
 

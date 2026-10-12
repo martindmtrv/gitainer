@@ -15,13 +15,13 @@ describe("InfisicalProvider", () => {
     delete process.env.MULTILINE_SECRET;
   });
 
-  test("updateProcessEnv flattens multiline secrets", async () => {
-    // Mock getSecrets to return a multiline secret
+  test("updateProcessEnv keeps the newlines of a multiline secret", async () => {
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIQ\n-----END CERTIFICATE-----\n";
     const getSecretsSpy = spyOn(InfisicalProvider, "getSecrets").mockImplementation(async () => {
       return [
         {
           secretKey: "MULTILINE_SECRET",
-          secretValue: "line1\nline2\nline3",
+          secretValue: pem,
           version: 1,
           workspace: "ws",
           id: "1",
@@ -32,16 +32,12 @@ describe("InfisicalProvider", () => {
       ];
     });
 
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-
     const result = await InfisicalProvider.updateProcessEnv();
 
     expect(result).toBe(true);
-    expect(process.env.MULTILINE_SECRET).toBe("line1 line2 line3");
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Secret "MULTILINE_SECRET" contains newlines'));
+    expect(process.env.MULTILINE_SECRET).toBe(pem);
 
     getSecretsSpy.mockRestore();
-    warnSpy.mockRestore();
   });
 
   test("updateProcessEnv does not change single line secrets", async () => {

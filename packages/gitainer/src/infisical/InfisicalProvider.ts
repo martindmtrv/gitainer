@@ -247,11 +247,8 @@ export async function updateProcessEnv(): Promise<boolean> {
     const settingsFromInfisical: Record<string, string> = {};
 
     secrets.forEach(secret => {
-      let value = secret.secretValue;
-      if (value.includes('\n')) {
-        console.warn(`[Infisical] Secret "${secret.secretKey}" contains newlines. Flattening to single line.`);
-        value = value.replace(/\n/g, ' ');
-      }
+      // as stored, newlines included: a certificate or key is useless on one line
+      const value = secret.secretValue;
       if (BOOTSTRAP_KEYS.includes(secret.secretKey)) {
         settingsFromInfisical[secret.secretKey] = value;
       } else {

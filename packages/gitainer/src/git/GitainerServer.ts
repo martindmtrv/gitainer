@@ -4,7 +4,7 @@ import { ResetMode } from 'simple-git';
 import { GitChangeType, type GitChange } from './GitChange';
 import { isStackDisabled, type DockerClient } from '../docker/DockerClient';
 import { $, type ShellError } from 'bun';
-import { changedEnvKeys, readEnvSnapshot, writeEnvSnapshot } from '../server/envUtils';
+import { changedEnvKeys, envSnapshot, readEnvSnapshot, writeEnvSnapshot } from '../server/envUtils';
 import { updateProcessEnv } from '../infisical/InfisicalProvider';
 import { createInitialCommitWithReadme } from './gitUtils';
 import { WebhookEventType, webhookTitle } from '../webhooks/WebhookEventType';
@@ -162,7 +162,7 @@ export class GitainerServer {
 
   // runs on every Infisical poll, so it stays silent unless an env actually changed
   async checkForStackEnvUpdate() {
-    const currentEnv = await $`env`.text();
+    const currentEnv = envSnapshot();
     writeEnvSnapshot(`${this.gitainerDataPath}/tmpEnv`, currentEnv);
 
     const modifiedEnvs = changedEnvKeys(
@@ -208,7 +208,7 @@ export class GitainerServer {
   private async stacksWithPendingEnvChange(): Promise<Set<string>> {
     const modifiedEnvs = changedEnvKeys(
       readEnvSnapshot(`${this.gitainerDataPath}/lastSynthesizedEnv`),
-      await $`env`.text(),
+      envSnapshot(),
     );
     return new Set((await this.bareRepo.listStacksWithEnvReference(modifiedEnvs)).map(change => change.file));
   }
@@ -491,7 +491,7 @@ export class GitainerServer {
       };
 
       log(res.msg);
-      writeEnvSnapshot(`${this.gitainerDataPath}/lastSynthesizedEnv`, await $`env`.text());
+      writeEnvSnapshot(`${this.gitainerDataPath}/lastSynthesizedEnv`, envSnapshot());
     } catch (e) {
       const errMsg = (e as Error).hasOwnProperty('message') ? (e as Error).message : String(e);
       log(errMsg);

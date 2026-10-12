@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changedEnvKeys, parseBooleanEnv } from "../src/server/envUtils";
+import { changedEnvKeys, envSnapshot, parseBooleanEnv } from "../src/server/envUtils";
 
 test("parseBooleanEnv treats explicit truthy values as enabled", () => {
   for (const value of ["1", "true", "TRUE", "True", "yes", "on", " 1 "]) {
@@ -39,4 +39,19 @@ test("changedEnvKeys treats an empty previous dump as everything new", () => {
 test("changedEnvKeys ignores HOSTNAME, which Docker sets to the container id", () => {
   expect(changedEnvKeys("HOSTNAME=abc123\nA=1\n", "HOSTNAME=def456\nA=1\n")).toEqual([]);
   expect(changedEnvKeys("", "HOSTNAME=def456\nA=1\n")).toEqual(["A"]);
+});
+
+test("envSnapshot keeps a multiline value as one entry", () => {
+  const pem = "-----BEGIN CERTIFICATE-----\nMIIB=\n-----END CERTIFICATE-----\n";
+  const snapshot = envSnapshot({ A: "1", CERT: pem, UNSET: undefined });
+
+  expect(changedEnvKeys(snapshot, envSnapshot({ CERT: pem, A: "1" }))).toEqual([]);
+  expect(changedEnvKeys(snapshot, envSnapshot({ A: "1", CERT: pem.replace("MIIB", "MIIC") }))).toEqual(["CERT"]);
+  // not the lines of the value: "MIIB=" would read as a key of its own
+  expect(changedEnvKeys("", snapshot)).toEqual(["A", "CERT"]);
+});
+
+test("changedEnvKeys reads an `env` dump written before envSnapshot() against a snapshot", () => {
+  expect(changedEnvKeys("A=1\nB=2\n", envSnapshot({ A: "1", B: "2" }))).toEqual([]);
+  expect(changedEnvKeys("A=1\nB=2\n", envSnapshot({ A: "1", B: "3", C: "4" }))).toEqual(["B", "C"]);
 });

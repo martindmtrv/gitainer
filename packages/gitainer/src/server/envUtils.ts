@@ -11,12 +11,24 @@ export function parseBooleanEnv(value: string | undefined): boolean {
   return value !== undefined && TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
 }
 
+/**
+ * The environment as a snapshot for changedEnvKeys(): `KEY=value` entries, each ended by a NUL
+ * rather than a newline, since a value can span lines (a PEM certificate from Infisical).
+ */
+export function envSnapshot(env: Record<string, string | undefined> = process.env): string {
+  return Object.entries(env)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${value}\0`)
+    .join("");
+}
+
+// a snapshot without any NUL is an `env` dump, one entry per line, as written before envSnapshot()
 function parseEnvDump(dump: string): Map<string, string> {
   const env = new Map<string, string>();
-  for (const line of dump.split("\n")) {
-    const separator = line.indexOf("=");
+  for (const entry of dump.split(dump.includes("\0") ? "\0" : "\n")) {
+    const separator = entry.indexOf("=");
     if (separator > 0) {
-      env.set(line.slice(0, separator), line.slice(separator + 1));
+      env.set(entry.slice(0, separator), entry.slice(separator + 1));
     }
   }
   return env;
@@ -30,7 +42,7 @@ const IGNORED_ENV_KEYS = new Set(["HOSTNAME"]);
 
 /**
  * Keys that are new or have a different value in `current` than in `previous`, both
- * `env` dumps. Compared by key, not line order: moving a variable from the mounted
+ * env snapshots. Compared by key, not line order: moving a variable from the mounted
  * .env to Infisical changes where `env` prints it, but not its value.
  */
 export function changedEnvKeys(previous: string, current: string): string[] {
@@ -41,7 +53,7 @@ export function changedEnvKeys(previous: string, current: string): string[] {
 }
 
 /**
- * Writes an `env` dump readable only by its owner, as it holds every secret in plain
+ * Writes an env snapshot readable only by its owner, as it holds every secret in plain
  * text. The chmod also tightens snapshots written before they were private, since
  * writing to an existing file keeps its mode.
  */
@@ -50,7 +62,7 @@ export function writeEnvSnapshot(path: string, dump: string) {
   chmodSync(path, 0o600);
 }
 
-/** The `env` dump at `path`, or an empty one if it doesn't exist yet. */
+/** The env snapshot at `path`, or an empty one if it doesn't exist yet. */
 export function readEnvSnapshot(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }

@@ -48,7 +48,7 @@ LABEL org.opencontainers.image.source=https://github.com/martindmtrv/gitainer
 LABEL org.opencontainers.image.description="Simple Git-based container management platform for Docker Standalone"
 
 # setup go 
-RUN apk add --no-cache git make musl-dev go curl openssh-client sshpass
+RUN apk add --no-cache git make musl-dev go curl openssh-client sshpass tini
 
 # Configure SSH to skip host key checking for remote hosts
 RUN mkdir -p /etc/ssh && \
@@ -98,4 +98,8 @@ RUN chmod +x /bin/migrate-portainer
 # make all git repos safe
 RUN git config --global --add safe.directory '*'
 
+# tini as PID 1, to reap what gets orphaned onto it: bun doesn't. The ssh of a `docker` call to a
+# remote host outlives its docker CLI, and git detaches its gc after a push; without a reaper
+# they stay zombies until the container restarts. Then the base image's entrypoint, as before
+ENTRYPOINT [ "/sbin/tini", "--", "docker-entrypoint.sh" ]
 CMD [ "bun", "run", "start" ]
